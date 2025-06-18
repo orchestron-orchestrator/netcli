@@ -1,0 +1,2 @@
+state:ready
+commands:['set cli screen-length 0', 'set cli screen-width 0', 'set cli complete-on-space off', 'set cli idle-timeout 0']

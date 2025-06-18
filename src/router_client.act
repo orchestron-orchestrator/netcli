@@ -1,0 +1,176 @@
+import logging
+import ssh
+import drivers
+
+"""Simple router client library for Acton"""
+
+actor Client(auth: WorldCap,
+             address: str,
+             username: str,
+             password: ?str = None,
+             key_path: ?str = None,
+             protocol_: str = "ssh",
+             port: int = 22,
+             device_type: ?str = None,
+             log_handler: ?logging.Handler = None):
+    """
+    Simple router client
+
+    Provides a clean interface for connecting to routers and executing commands.
+
+    Args:
+        auth: WorldCap for SSH process creation
+        address: Router IP address or hostname
+        username: SSH username
+        password: Password for authentication
+        key_path: Path to SSH private key
+        protocol_: Connection protocol ("ssh" or "telnet", only ssh supported currently)
+        port: Connection port (default: 22 for SSH, 23 for telnet)
+        device_type: Device type override (e.g., "juniper_junos", "cisco_iosxr")
+        log_handler: Optional logging handler
+    """
+
+    _log = logging.Logger(log_handler)
+    _log.info("Initializing router client", {"address": address, "protocol_": protocol_})
+
+    var _ssh_client: ?ssh.SSHClient = None
+    var _driver: ?drivers._Driver = None
+
+    def _on_ssh_connect(client: ssh.SSHClient) -> None:
+        """Handle SSH connection establishment"""
+        _log.info("SSH connection established")
+        _ssh_client = client
+
+        # Auto-detect device type if not specified
+        detected_type = device_type
+        if detected_type is None:
+            detected_type = drivers.auto_detect(client)
+
+        # Create appropriate driver
+        if detected_type is not None and detected_type != drivers.DEVICE_TYPE_UNKNOWN:
+            _log.info("Using device type", {"device_type": detected_type})
+            ssh_wrapper = drivers.ProductionSSHWrapper(client)
+            _driver = drivers.create_driver(detected_type, ssh_wrapper, _log)
+        else:
+            _log.error("Failed to detect device type or unsupported device", {"detected_type": detected_type if detected_type is not None else "None"})
+        if _driver is not None:
+            _driver.initialize()
+
+    def _on_ssh_data(client: ssh.SSHClient, data: bytes) -> None:
+        """Handle SSH data reception"""
+        if _driver is not None:
+            _driver.handle_data(data)
+
+    def _on_ssh_error(client: ssh.SSHClient, error: str) -> None:
+        """Handle SSH errors"""
+        _log.error("SSH error", {"error": error})
+
+    def _on_ssh_exit(client: ssh.SSHClient, exit_code: int, term_signal: ?int) -> None:
+        """Handle SSH connection termination"""
+        _log.info("SSH connection closed", {"exit_code": exit_code})
+
+    def is_connected() -> bool:
+        """Check if client is connected and ready"""
+        if _driver is not None:
+            return _driver.is_ready()
+        return False
+
+    def cmd(cb: action(err: ?Exception, response: ?str) -> None, command: str) -> None:
+        """
+        Run a command on device and return the result via callback
+
+        Args:
+            cb: Callback function receiving (error, response)
+            command: Command to execute
+        """
+        if _driver is not None and is_connected():
+            _driver.execute_command(cb, command)
+        else:
+            cb(Exception("Not connected or driver not initialized"), None)
+
+    def configure_and_commit(on_success: action(response: str) -> None,
+                            on_error: action(err: Exception, response: str) -> None,
+                            config: list[str]) -> None:
+        """
+        Apply configuration and commit atomically
+
+        This is the primary method for making configuration changes. The configuration
+        is applied and immediately committed as a single atomic operation. If commit fails,
+        the configuration is automatically rolled back by the driver.
+
+        Args:
+            on_success: Callback for successful commit (receives response text)
+            on_error: Callback for any failure (receives error and response text)
+            config: List of configuration commands
+        """
+        if _driver is not None and is_connected():
+            def _on_complete(err: ?Exception, session_log: str) -> None:
+                if err is not None:
+                    on_error(err, session_log)
+                else:
+                    on_success(session_log)
+
+            _driver.configure_and_commit(_on_complete, config)
+        else:
+            on_error(Exception("Not connected or driver not initialized"), "")
+
+
+    def rollback_commits(cb: action(err: ?Exception, session_log: str) -> None, commits_back: int) -> None:
+        """
+        Rollback previously committed configuration changes
+
+        Args:
+            cb: Callback function receiving error (if any)
+            commits_back: Number of commits to rollback (must be >= 1)
+        """
+        if _driver is not None and is_connected():
+            _driver.rollback_configuration(cb, commits_back)
+        else:
+            cb(Exception("Not connected or driver not initialized"), "")
+
+
+    def disconnect() -> None:
+        """Disconnect from the device"""
+        if _ssh_client is not None:
+            _ssh_client.close()
+        _ssh_client = None
+        _driver = None
+
+    def get_device_info() -> ?dict[str, str]:
+        """Get device information"""
+        if _driver is not None:
+            return _driver.get_device_info()
+        else:
+            return None
+
+    # Validate protocol
+    if protocol_ != "ssh":
+        _log.error("Unsupported protocol", {"protocol_": protocol_})
+        # For now, only SSH is supported
+        raise ValueError("Unsupported protocol: " + protocol_)
+
+    # Adjust port if default
+    actual_port = port
+    if port == 22 and protocol_ == "ssh":
+        actual_port = 22
+    elif port == 23 and protocol_ == "telnet":
+        actual_port = 23
+
+    # Initialize SSH connection
+    _log.debug("Starting SSH connection", {"address": address, "port": actual_port})
+
+    ssh.SSHClient(
+        auth,
+        address=address,
+        port=actual_port,
+        username=username,
+        password=password,
+        key_path=key_path,
+        strict_host_key_checking=False,
+        connect_timeout=30,
+        on_connect=_on_ssh_connect,
+        on_data=_on_ssh_data,
+        on_error=_on_ssh_error,
+        on_exit=_on_ssh_exit,
+        log_handler=log_handler
+    )

@@ -1,0 +1,541 @@
+import logging
+import ssh
+import re
+import time
+
+"""Router driver auto-detection and base classes"""
+
+# SSH Client Wrapper for dependency injection and testing
+class SSHClientWrapper(object):
+    """Base wrapper interface for SSH client operations"""
+    send_str: proc(data: str) -> bool
+
+class ProductionSSHWrapper(SSHClientWrapper):
+    """Production wrapper that delegates to real SSH client"""
+    _ssh_client: ssh.SSHClient
+
+    def __init__(self, ssh_client: ssh.SSHClient):
+        self._ssh_client = ssh_client
+
+    def send_str(self, data: str) -> bool:
+        """Send string data via SSH client"""
+        return self._ssh_client.send_str(data)
+
+class TestSSHWrapper(SSHClientWrapper):
+    """Test wrapper that captures sent commands for verification"""
+    _sent_commands: list[str]
+
+    def __init__(self):
+        self._sent_commands = []
+
+    def send_str(self, data: str) -> bool:
+        """Capture sent command instead of sending via SSH"""
+        self._sent_commands.append(data.strip())
+        return True
+
+    def get_sent_commands(self) -> list[str]:
+        """Get list of commands sent to this wrapper"""
+        return self._sent_commands.copy()
+
+    def clear_sent_commands(self) -> None:
+        """Clear the sent commands list"""
+        self._sent_commands = []
+
+# Device types
+DEVICE_TYPE_UNKNOWN: str = "unknown"
+DEVICE_TYPE_JUNIPER: str = "juniper_junos"
+DEVICE_TYPE_CISCO_IOSXR: str = "cisco_iosxr"
+
+# Driver states
+DRIVER_STATE_INITIALIZING: str = "initializing"
+DRIVER_STATE_READY: str = "ready"
+DRIVER_STATE_EXECUTING_COMMAND: str = "executing_command"
+DRIVER_STATE_ENTERING_CONFIG: str = "entering_config"
+DRIVER_STATE_CONFIG_MODE: str = "config_mode"
+DRIVER_STATE_APPLYING_CONFIG: str = "applying_config"
+DRIVER_STATE_COMMITTING: str = "committing"
+DRIVER_STATE_ABORTING_CONFIG: str = "aborting_config"
+DRIVER_STATE_ROLLING_BACK: str = "rolling_back"
+DRIVER_STATE_ERROR: str = "error"
+DRIVER_STATE_DISCONNECTED: str = "disconnected"
+
+class _Driver(object):
+    """Base implementation class for router drivers"""
+
+    device_type: str
+    ssh_client: SSHClientWrapper
+    log: logging.Logger
+    initialize: proc() -> None
+    is_ready: proc() -> bool
+    get_state: proc() -> str
+    handle_data: proc(data: bytes) -> None
+    execute_command: proc(cb: action(err: ?Exception, response: ?str) -> None, command: str) -> None
+    configure_and_commit: proc(cb: action(err: ?Exception, session_log: str) -> None, config: list[str]) -> None
+    rollback_configuration: proc(cb: action(err: ?Exception, session_log: str) -> None, commits_back: int) -> None
+    get_device_info: proc() -> dict[str, str]
+
+class _BaseDriver(_Driver):
+    """Base driver implementation with common functionality"""
+
+    _output_buffer: str
+    _session_log: str
+    _state: str
+    _current_command: ?str
+    _command_callback: ?action(err: ?Exception, response: ?str) -> None
+    _config_callback: ?action(err: ?Exception, session_log: str) -> None
+    _config_commands: list[str]
+    _rollback_commits: int
+
+    def __init__(self, device_type: str, ssh_client: SSHClientWrapper, log: logging.Logger):
+        self.device_type = device_type
+        self.ssh_client = ssh_client
+        self.log = log
+        self._output_buffer = ""
+        self._session_log = ""
+        self._state = DRIVER_STATE_INITIALIZING
+        self._current_command = None
+        self._command_callback = None
+        self._config_callback = None
+        self._config_commands = []
+        self._rollback_commits = 0
+
+    def initialize(self) -> None:
+        """Initialize driver - override in subclasses"""
+        self.log.info("Initializing base driver")
+        self._transition_to_state(DRIVER_STATE_READY)
+
+    def is_ready(self) -> bool:
+        """Check if driver is ready"""
+        return self._state == DRIVER_STATE_READY
+
+    def get_state(self) -> str:
+        """Get current driver state"""
+        return self._state
+
+    def _transition_to_state(self, new_state: str) -> None:
+        """Transition to new state with validation and logging"""
+        if self._is_valid_transition(self._state, new_state):
+            old_state = self._state
+            self._state = new_state
+            self.log.debug("Driver state transition", {"from": old_state, "to": new_state})
+        else:
+            self.log.error("Invalid state transition attempted", {"from": self._state, "to": new_state})
+            self._transition_to_state(DRIVER_STATE_ERROR)
+
+    def _is_valid_transition(self, from_state: str, to_state: str) -> bool:
+        """Check if state transition is valid"""
+        valid_transitions = {
+            DRIVER_STATE_INITIALIZING: [DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_READY: [DRIVER_STATE_EXECUTING_COMMAND, DRIVER_STATE_ENTERING_CONFIG, DRIVER_STATE_ROLLING_BACK, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_EXECUTING_COMMAND: [DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_ENTERING_CONFIG: [DRIVER_STATE_CONFIG_MODE, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_CONFIG_MODE: [DRIVER_STATE_APPLYING_CONFIG, DRIVER_STATE_ABORTING_CONFIG, DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_APPLYING_CONFIG: [DRIVER_STATE_COMMITTING, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_COMMITTING: [DRIVER_STATE_READY, DRIVER_STATE_ABORTING_CONFIG, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_ABORTING_CONFIG: [DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_ROLLING_BACK: [DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_ERROR: [DRIVER_STATE_READY, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_DISCONNECTED: [DRIVER_STATE_INITIALIZING]
+        }
+
+        allowed_states = valid_transitions.get_def(from_state, [])
+        return to_state in allowed_states
+
+    def _handle_error(self, error: Exception) -> None:
+        """Handle error state transition and cleanup"""
+        self.log.error("Driver error occurred", {"error": str(error), "current_state": self._state})
+
+        # Call pending callbacks with error
+        cmd_callback = self._command_callback
+        if cmd_callback is not None:
+            self._command_callback = None
+            self._current_command = None
+            cmd_callback(error, None)
+
+        config_callback = self._config_callback
+        if config_callback is not None:
+            self._config_callback = None
+            self._config_commands = []
+            config_callback(error, self._session_log)
+
+
+        # Transition to error state
+        self._transition_to_state(DRIVER_STATE_ERROR)
+        self._output_buffer = ""
+
+    def handle_data(self, data: bytes) -> None:
+        """Handle incoming data"""
+        data_str = data.decode()
+        self._output_buffer += data_str
+
+        # Accumulate session log during any active operation
+        if self._state not in [DRIVER_STATE_READY, DRIVER_STATE_INITIALIZING, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED]:
+            self._session_log += data_str
+
+        # Check for prompts using device-specific logic
+        if self._is_device_prompt(self._output_buffer):
+            self._handle_prompt_received()
+
+    def _is_device_prompt(self, text: str) -> bool:
+        """Check if text contains device prompt - must be implemented by subclasses"""
+        raise NotImplementedError("_is_device_prompt must be implemented by subclasses")
+
+    def _commit_failed(self, output: str) -> bool:
+        """Check if commit failed based on output - must be implemented by subclasses"""
+        raise NotImplementedError("_commit_failed must be implemented by subclasses")
+
+    def _handle_prompt_received(self) -> None:
+        """Handle when prompt is received"""
+        if self._state == DRIVER_STATE_EXECUTING_COMMAND:
+            # Extract command output
+            cmd = self._current_command
+            if cmd is not None:
+                output = self._extract_output(self._output_buffer, cmd)
+                cmd_callback = self._command_callback
+                if cmd_callback is not None:
+                    cmd_callback(None, output)
+                self._current_command = None
+                self._command_callback = None
+
+            self._transition_to_state(DRIVER_STATE_READY)
+            self._output_buffer = ""
+
+        elif self._state == DRIVER_STATE_ENTERING_CONFIG:
+            self._transition_to_state(DRIVER_STATE_CONFIG_MODE)
+            # Start applying config commands
+            if len(self._config_commands) > 0:
+                self._transition_to_state(DRIVER_STATE_APPLYING_CONFIG)
+                cmd = self._config_commands.pop(0)
+                self.ssh_client.send_str(cmd + "\n")
+            else:
+                # No config commands, go straight to commit
+                self._transition_to_state(DRIVER_STATE_COMMITTING)
+                commit_cmds = self._get_commit_commands()
+                for cmd in commit_cmds:
+                    self.ssh_client.send_str(cmd + "\n")
+            self._output_buffer = ""
+
+        elif self._state == DRIVER_STATE_APPLYING_CONFIG:
+            if len(self._config_commands) > 0:
+                # Send next config command
+                cmd = self._config_commands.pop(0)
+                self.ssh_client.send_str(cmd + "\n")
+            else:
+                # All config commands sent, proceed to commit
+                self._transition_to_state(DRIVER_STATE_COMMITTING)
+                commit_cmds = self._get_commit_commands()
+                for cmd in commit_cmds:
+                    self.ssh_client.send_str(cmd + "\n")
+            self._output_buffer = ""
+
+        elif self._state == DRIVER_STATE_COMMITTING:
+            # Check if commit succeeded or failed
+            if self._commit_failed(self._output_buffer):
+                # Commit failed - trigger automatic rollback
+                self._handle_commit_failure()
+            else:
+                # Configuration committed successfully
+                config_callback = self._config_callback
+                if config_callback is not None:
+                    self._config_callback = None
+                    config_callback(None, self._session_log)
+
+                self._transition_to_state(DRIVER_STATE_READY)
+                self._output_buffer = ""
+
+        elif self._state == DRIVER_STATE_ABORTING_CONFIG:
+            # Configuration aborted successfully (automatic rollback after commit failure)
+            config_callback = self._config_callback
+            if config_callback is not None:
+                # Report commit failure but successful rollback
+                abort_error = Exception("Configuration commit failed but was automatically rolled back")
+                config_callback(abort_error, self._session_log)
+                self._config_callback = None
+
+            self._transition_to_state(DRIVER_STATE_READY)
+            self._output_buffer = ""
+
+        elif self._state == DRIVER_STATE_ROLLING_BACK:
+            # Rollback completed successfully
+            config_callback = self._config_callback
+            if config_callback is not None:
+                config_callback(None, self._session_log)
+                self._config_callback = None
+
+            self._rollback_commits = 0
+            self._transition_to_state(DRIVER_STATE_READY)
+            self._output_buffer = ""
+
+    def _extract_output(self, full_output: str, command: str) -> str:
+        """Extract command output from buffer"""
+        lines = full_output.split('\n')
+        output_lines = []
+        command_found = False
+
+        self.log.trace("Extracting output for command", {"command": command, "output": full_output})
+        for line in lines:
+            if not command_found and command in line:
+                self.log.trace("Command found in output", {"command": command, "line": line})
+                command_found = True
+                continue
+
+            # Check if this line contains a prompt (end of output)
+            if command_found and self._is_device_prompt(line):
+                break
+
+            # Add line to output if it's not a prompt
+            if command_found:
+                output_lines.append(line)
+
+        return '\n'.join(output_lines).strip()
+
+    def execute_command(self, cb: action(err: ?Exception, response: ?str) -> None, command: str) -> None:
+        """Execute command on device"""
+        if self._state != DRIVER_STATE_READY:
+            cb(Exception("Driver not ready - current state: " + self._state), None)
+            return
+
+        self._current_command = command
+        self._command_callback = cb
+        self._transition_to_state(DRIVER_STATE_EXECUTING_COMMAND)
+        self._output_buffer = ""
+
+        self.ssh_client.send_str(command + "\n")
+
+    def _get_config_commands(self) -> list[str]:
+        """Get device-specific config mode commands - must be implemented by subclasses"""
+        raise NotImplementedError("_get_config_commands must be implemented by subclasses")
+
+    def _get_commit_commands(self) -> list[str]:
+        """Get device-specific commit commands - must be implemented by subclasses"""
+        raise NotImplementedError("_get_commit_commands must be implemented by subclasses")
+
+    def configure_and_commit(self, cb: action(err: ?Exception, session_log: str) -> None, config: list[str]) -> None:
+        """Apply configuration and commit atomically with automatic rollback on failure"""
+        if self._state != DRIVER_STATE_READY:
+            cb(Exception("Driver not ready - current state: " + self._state), "")
+            return
+
+        self._config_callback = cb
+        self._config_commands = config.copy()
+        self._transition_to_state(DRIVER_STATE_ENTERING_CONFIG)
+        self._output_buffer = ""
+        self._session_log = ""
+
+        # Enter config mode using device-specific commands
+        config_cmds = self._get_config_commands()
+        for cmd in config_cmds:
+            self.ssh_client.send_str(cmd + "\n")
+
+    def _handle_commit_failure(self) -> None:
+        """Handle commit failure by automatically rolling back"""
+        self.log.warning("Commit failed, automatically rolling back configuration")
+        self._transition_to_state(DRIVER_STATE_ABORTING_CONFIG)
+
+        # Send device-specific abort commands
+        abort_cmds = self._get_abort_commands()
+        for cmd in abort_cmds:
+            self.ssh_client.send_str(cmd + "\n")
+
+    def rollback_configuration(self, cb: action(err: ?Exception, session_log: str) -> None, commits_back: int) -> None:
+        """Rollback to previous configuration"""
+        if self._state != DRIVER_STATE_READY:
+            cb(Exception("Cannot rollback - not ready. Current state: " + self._state), "")
+            return
+
+        if commits_back < 1:
+            cb(Exception("commits_back must be at least 1"), "")
+            return
+
+        self._config_callback = cb
+        self._rollback_commits = commits_back
+        self._transition_to_state(DRIVER_STATE_ROLLING_BACK)
+        self._output_buffer = ""
+
+        # Send device-specific rollback commands
+        rollback_cmds = self._get_rollback_commands(commits_back)
+        for cmd in rollback_cmds:
+            self.ssh_client.send_str(cmd + "\n")
+
+    def _get_abort_commands(self) -> list[str]:
+        """Get device-specific abort commands - must be implemented by subclasses"""
+        raise NotImplementedError("_get_abort_commands must be implemented by subclasses")
+
+    def _get_rollback_commands(self, commits_back: int) -> list[str]:
+        """Get device-specific rollback commands - must be implemented by subclasses"""
+        raise NotImplementedError("_get_rollback_commands must be implemented by subclasses")
+
+def auto_detect(ssh_client: ssh.SSHClient) -> str:
+    """
+    Auto-detect device type based on SSH banner and initial prompts
+
+    This is a simplified detection that would need to be enhanced
+    for production use. Currently returns unknown for all devices.
+
+    Args:
+        ssh_client: Established SSH connection
+
+    Returns:
+        Device type string
+    """
+    # For now, return unknown - this would need actual detection logic
+    # that analyzes the SSH banner, initial prompts, etc.
+    return DEVICE_TYPE_UNKNOWN
+
+def create_driver(device_type: str, ssh_client: SSHClientWrapper, log: logging.Logger) -> ?_Driver:
+    """
+    Create appropriate driver instance based on device type
+
+    Args:
+        device_type: Device type string
+        ssh_client: SSH connection
+        log: Logger instance
+
+    Returns:
+        Driver instance or None if unsupported
+    """
+    if device_type == DEVICE_TYPE_JUNIPER:
+        return _JuniperDriver(device_type, ssh_client, log)
+    elif device_type == DEVICE_TYPE_CISCO_IOSXR:
+        return _CiscoIOSXRDriver(device_type, ssh_client, log)
+    else:
+        log.warning("Unsupported device type", {"device_type": device_type})
+        return None
+
+
+class _JuniperDriver(_BaseDriver):
+    """Juniper JUNOS driver implementation"""
+
+    def initialize(self) -> None:
+        """Initialize Juniper driver"""
+        self.log.info("Initializing Juniper driver")
+
+        # Send initialization commands to disable pagination and prompts
+        # These commands ensure clean automation without interactive interruptions
+        init_commands = [
+            "set cli screen-length 0",        # Disable pagination
+            "set cli screen-width 0",         # Disable line wrapping
+            "set cli complete-on-space off",  # Disable auto-completion on space
+            "set cli idle-timeout 0"          # Disable idle timeout
+        ]
+
+        for cmd in init_commands:
+            self.ssh_client.send_str(cmd + "\n")
+
+        self._transition_to_state(DRIVER_STATE_READY)
+
+    def _is_device_prompt(self, text: str) -> bool:
+        """Check if text contains Juniper prompt"""
+        lines = text.split('\n')
+        for line in lines:
+            stripped = line.strip()
+            if len(stripped) > 0:
+                # Operational mode: user@hostname>
+                match = re.match(r"^[\w\-\.]+@[\w\-\.]+>\s*$", stripped)
+                if match is not None:
+                    return True
+                # Configuration mode: user@hostname#
+                match = re.match(r"^[\w\-\.]+@[\w\-\.]+#\s*$", stripped)
+                if match is not None:
+                    return True
+        return False
+
+    def _commit_failed(self, output: str) -> bool:
+        """Check if Juniper commit failed"""
+        # Juniper commit errors typically contain keywords like "error:", "failed", etc.
+        output_lower = output.lower()
+        return "error:" in output_lower or "failed" in output_lower or "commit failed" in output_lower
+
+    def _get_config_commands(self) -> list[str]:
+        """Get Juniper config mode commands"""
+        return ["configure"]
+
+    def _get_commit_commands(self) -> list[str]:
+        """Get Juniper commit commands"""
+        return ["commit", "exit"]
+
+    def _get_abort_commands(self) -> list[str]:
+        """Get Juniper abort commands"""
+        return ["rollback", "exit"]
+
+    def _get_rollback_commands(self, commits_back: int) -> list[str]:
+        """Get Juniper rollback commands"""
+        rollback_cmd = "rollback " + str(commits_back)
+        return ["configure", rollback_cmd, "commit", "exit"]
+
+    def get_device_info(self) -> dict[str, str]:
+        """Get Juniper device info"""
+        return {
+            "device_type": DEVICE_TYPE_JUNIPER,
+            "vendor": "Juniper",
+            "os": "JUNOS"
+        }
+
+class _CiscoIOSXRDriver(_BaseDriver):
+    """Cisco IOS XR driver implementation"""
+
+    def initialize(self) -> None:
+        """Initialize Cisco IOS XR driver"""
+        self.log.info("Initializing Cisco IOS XR driver")
+
+        # Send initialization commands to disable pagination and prompts
+        # These commands ensure clean automation without interactive interruptions
+        init_commands = [
+            "terminal length 0",              # Disable pagination
+            "terminal width 0",               # Disable line wrapping
+            "terminal exec prompt no-timestamp",  # Remove timestamps from prompts
+            "terminal no-monitor"             # Disable console logging interruptions
+        ]
+
+        for cmd in init_commands:
+            self.ssh_client.send_str(cmd + "\n")
+
+        self._transition_to_state(DRIVER_STATE_READY)
+
+    def _is_device_prompt(self, text: str) -> bool:
+        """Check if text contains IOS XR prompt"""
+        lines = text.split('\n')
+        for line in lines:
+            stripped = line.strip()
+            if len(stripped) > 0:
+                # Exec mode: RP/0/RP0/CPU0:hostname#
+                match = re.match(r"^RP/\d+/\w+/CPU\d+:[\w\-\.]+#\s*$", stripped)
+                if match is not None:
+                    return True
+                # Config mode: RP/0/RP0/CPU0:hostname(config)#
+                match = re.match(r"^RP/\d+/\w+/CPU\d+:[\w\-\.]+\(config[^\)]*\)#\s*$", stripped)
+                if match is not None:
+                    return True
+        return False
+
+    def _commit_failed(self, output: str) -> bool:
+        """Check if Cisco IOS XR commit failed"""
+        # IOS XR commit errors typically contain keywords like "% Error", "Failed", etc.
+        output_lower = output.lower()
+        return "% error" in output_lower or "failed" in output_lower or "commit failed" in output_lower or "% invalid" in output_lower
+
+
+    def _get_config_commands(self) -> list[str]:
+        """Get Cisco IOS XR config mode commands"""
+        return ["configure terminal"]
+
+    def _get_commit_commands(self) -> list[str]:
+        """Get Cisco IOS XR commit commands"""
+        return ["commit", "end"]
+
+    def _get_abort_commands(self) -> list[str]:
+        """Get Cisco IOS XR abort commands"""
+        return ["abort", "end"]
+
+    def _get_rollback_commands(self, commits_back: int) -> list[str]:
+        """Get Cisco IOS XR rollback commands"""
+        rollback_cmd = "rollback configuration last " + str(commits_back)
+        return ["configure terminal", rollback_cmd, "commit", "end"]
+
+    def get_device_info(self) -> dict[str, str]:
+        """Get Cisco IOS XR device info"""
+        return {
+            "device_type": DEVICE_TYPE_CISCO_IOSXR,
+            "vendor": "Cisco",
+            "os": "IOS XR"
+        }

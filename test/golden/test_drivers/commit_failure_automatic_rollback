@@ -1,0 +1,8 @@
+error:Exception: Configuration commit failed but was automatically rolled back
+session_log:configure
+user@device# set invalid config
+user@device# commit
+error: commit failed - invalid configuration
+user@device# rollback
+user@device# 
+commands:['configure', 'set invalid config', 'commit', 'exit', 'rollback', 'exit']

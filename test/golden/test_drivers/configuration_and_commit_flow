@@ -1,0 +1,7 @@
+session_log:configure
+user@device# set interfaces ge-0/0/0 description test
+user@device# commit
+commit complete
+user@device# 
+state:ready
+commands:['configure', 'set interfaces ge-0/0/0 description test', 'commit', 'exit']

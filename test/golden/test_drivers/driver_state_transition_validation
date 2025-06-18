@@ -1,0 +1,2 @@
+valid_transitions:['ready->executing_command:valid', 'ready->entering_config:valid', 'executing_command->ready:valid', 'config_mode->applying_config:valid']
+invalid_transitions:['executing_command->config_mode:invalid', 'applying_config->executing_command:invalid', 'committing->entering_config:invalid']

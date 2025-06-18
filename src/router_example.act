@@ -1,0 +1,181 @@
+import logging
+import router_client
+
+
+actor Example(wc, on_done):
+    """Example demonstrating simplified router client usage"""
+
+    # Create logging handler
+    log_handler = logging.Handler("router_example")
+    log_handler.set_output_level(logging.DEBUG)
+    log_handler.add_sink(logging.StdoutSink())
+
+    var client: ?router_client.Client = None
+
+    def on_command_result(err: ?Exception, response: ?str) -> None:
+        """Handle command execution results"""
+        if err is not None:
+            print("Command failed:", str(err))
+        else:
+            print("Command result:", response if response is not None else "No response")
+
+    def on_config_success(response: str) -> None:
+        """Handle successful configuration"""
+        print("Configuration applied successfully:", response)
+
+    def on_config_error(err: Exception, response: str) -> None:
+        """Handle configuration errors"""
+        print("Configuration failed:", str(err))
+        if len(response) > 0:
+            print("Response:", response)
+
+    def start_example() -> None:
+        """Start the router client example"""
+        print("=== Router Client Example ===")
+
+        # Create client with Juniper device type
+        client = router_client.Client(
+            auth=wc,
+            address="localhost",  # Example IP
+            port=32814,
+            username="clab",
+            password="clab@123",
+            device_type="juniper_junos",
+            log_handler=log_handler
+        )
+
+        # Wait a bit for connection to establish
+        after 2.0: execute_commands()
+
+    def execute_commands() -> None:
+        """Execute some example commands"""
+        c = client
+        if c is not None and c.is_connected():
+            print("Executing show version command...")
+            c.cmd(on_command_result, "show version")
+
+            # Wait and execute another command
+            after 1.0: execute_config()
+        else:
+            print("Client not connected yet, retrying...")
+            after 1.0: execute_commands()
+
+    def execute_config() -> None:
+        """Execute configuration example"""
+        c = client
+        if c is not None and c.is_connected():
+            print("Applying configuration...")
+            config_commands = [
+                "set interfaces lo0 unit 0 description \"Test loopback\"",
+                "set interfaces lo0 unit 0 family inet address 1.1.1.1/32"
+            ]
+            c.configure_and_commit(on_config_success, on_config_error, config_commands)
+
+            after 2.0: show_config()
+        else:
+            print("Client not connected for config")
+
+    def show_config():
+        """Show current configuration"""
+        c = client
+        if c is not None and c.is_connected():
+            print("Fetching current configuration...")
+            c.cmd(on_command_result, "show configuration")
+            after 2.0: verify_interface_exists()
+        else:
+            print("Client not connected for config fetch")
+
+    def on_interface_check(err: ?Exception, response: ?str) -> None:
+        """Handle interface verification results"""
+        if err is not None:
+            print("Interface check failed:", str(err))
+        else:
+            response_str = response if response is not None else ""
+            if "lo0" in response_str and "1.1.1.1" in response_str:
+                print("✓ VERIFICATION: lo0 interface exists with IP 1.1.1.1")
+            else:
+                print("✗ VERIFICATION: lo0 interface not found or missing IP")
+            print("Interface check response:", response_str)
+
+    def verify_interface_exists():
+        """Verify that lo0 interface exists after commit"""
+        c = client
+        if c is not None and c.is_connected():
+            print("=== Verifying lo0 interface exists ===")
+            c.cmd(on_interface_check, "show interfaces lo0")
+            after 2.0: test_rollback()
+        else:
+            print("Client not connected for interface verification")
+
+    def on_rollback_result(err: ?Exception, session_log: str) -> None:
+        """Handle rollback results"""
+        if err is not None:
+            print("Rollback failed:", str(err))
+            if len(session_log) > 0:
+                print("Session log:", session_log)
+        else:
+            print("Rollback completed successfully")
+            if len(session_log) > 0:
+                print("Session log:", session_log)
+
+    def test_rollback() -> None:
+        """Test configuration rollback functionality"""
+        c = client
+        if c is not None and c.is_connected():
+            print("=== Testing Configuration Rollback ===")
+            print("Rolling back 1 commit...")
+            c.rollback_commits(on_rollback_result, 1)
+            after 2.0: show_config_after_rollback()
+        else:
+            print("Client not connected for rollback test")
+
+    def show_config_after_rollback():
+        """Show configuration after rollback to verify changes"""
+        c = client
+        if c is not None and c.is_connected():
+            print("Fetching configuration after rollback...")
+            c.cmd(on_command_result, "show configuration")
+            after 2.0: verify_interface_removed()
+        else:
+            print("Client not connected for post-rollback config fetch")
+
+    def on_interface_check_after_rollback(err: ?Exception, response: ?str) -> None:
+        """Handle interface verification after rollback"""
+        if err is not None:
+            print("Post-rollback interface check failed:", str(err))
+        else:
+            response_str = response if response is not None else ""
+            if "1.1.1.1" not in response_str or "Test loopback" not in response_str:
+                print("✓ VERIFICATION: lo0 interface configuration rolled back successfully")
+            else:
+                print("✗ VERIFICATION: lo0 interface still has old configuration")
+            print("Post-rollback interface check response:", response_str)
+
+    def verify_interface_removed():
+        """Verify that lo0 interface configuration is removed after rollback"""
+        c = client
+        if c is not None and c.is_connected():
+            print("=== Verifying lo0 interface configuration removed ===")
+            c.cmd(on_interface_check_after_rollback, "show interfaces lo0")
+            after 1.0: cleanup()
+        else:
+            print("Client not connected for post-rollback interface verification")
+
+    def cleanup() -> None:
+        """Clean up the example"""
+        print("Cleaning up...")
+        c = client
+        if c is not None:
+            c.disconnect()
+        print("Example completed")
+        on_done()
+
+    # Start the example
+    start_example()
+
+actor main(env):
+    """Main entry point"""
+    def done():
+        env.exit(0)
+
+    Example(env.cap, done)

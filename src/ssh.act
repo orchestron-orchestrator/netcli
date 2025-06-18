@@ -1,0 +1,204 @@
+import logging
+import process
+
+"""SSH client library for Acton"""
+
+# Authentication methods
+AUTH_NONE: int = 0
+AUTH_PASSWORD: int = 1
+AUTH_KEY: int = 2
+
+actor SSHClient(auth: WorldCap,
+                address: str,
+                port: int = 22,
+                username: str,
+                password: ?str = None,
+                key_path: ?str = None,
+                subsystem: ?str = None,
+                strict_host_key_checking: bool = True,
+                connect_timeout: int = 30,
+                on_connect: action(SSHClient) -> None,
+                on_data: action(SSHClient, bytes) -> None,
+                on_error: action(SSHClient, str) -> None,
+                on_exit: action(SSHClient, int, ?int) -> None,
+                log_handler: ?logging.Handler = None):
+    """
+    SSH Client Actor
+
+    Provides a simple interface for establishing SSH connections with support for:
+    - Password authentication (via sshpass)
+    - Key-based authentication
+    - Custom subsystems
+    - Configurable connection options
+
+    Args:
+        auth: WorldCap for process creation
+        address: Remote host address
+        port: SSH port (default: 22)
+        username: SSH username
+        password: Password for authentication (requires sshpass)
+        key_path: Path to private key file
+        subsystem: SSH subsystem to invoke (e.g., "netconf", "sftp")
+        strict_host_key_checking: Whether to verify host keys
+        connect_timeout: Connection timeout in seconds
+        on_connect: Callback when connection is established
+        on_data: Callback when data is received
+        on_error: Callback when an error occurs
+        on_exit: Callback when SSH process exits
+        log_handler: Optional logging handler
+    """
+
+    _log = logging.Logger(log_handler)
+    _log.info("Connecting to SSH", {"address": address, "port": port, "username": username})
+
+    var _process: ?process.Process = None
+    var _connected: bool = False
+
+    def get_auth_method() -> int:
+        """Determine the authentication method based on provided credentials"""
+        if password is not None:
+            return AUTH_PASSWORD
+        elif key_path is not None:
+            return AUTH_KEY
+        else:
+            return AUTH_NONE
+
+    def build_ssh_command() -> (list[str], ?dict[str, str]):
+        """Build SSH command and environment based on authentication method"""
+        auth_method = get_auth_method()
+        cmd_env: ?dict[str, str] = None
+
+        base_cmd = ["ssh"]
+
+        # Add port
+        base_cmd.extend(["-p", str(port)])
+
+        # Add username
+        base_cmd.extend(["-l", username])
+
+        # Add connection timeout
+        base_cmd.extend(["-o", "ConnectTimeout=" + str(connect_timeout)])
+
+        # Handle host key checking
+        if not strict_host_key_checking:
+            base_cmd.extend(["-o", "StrictHostKeyChecking=no"])
+            base_cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
+
+        # Handle authentication
+        if auth_method == AUTH_PASSWORD:
+            if password is not None:
+                cmd_env = {"SSHPASS": password}
+                cmd = ["/opt/homebrew/bin/sshpass", "-e"] + base_cmd
+            else:
+                cmd = base_cmd
+        elif auth_method == AUTH_KEY:
+            if key_path is not None:
+                cmd = base_cmd + ["-i", key_path]
+            else:
+                cmd = base_cmd
+        else:
+            cmd = base_cmd
+
+        # Add target address
+        cmd.append(address)
+
+        # Add subsystem if specified
+        if subsystem is not None:
+            cmd.extend(["-s", subsystem])
+
+        return (cmd, cmd_env)
+
+    def _on_stdout(p: process.Process, data: ?bytes) -> None:
+        """Handle stdout data from SSH process"""
+        if data is not None:
+            if not _connected:
+                _connected = True
+                on_connect(self)
+            on_data(self, data)
+
+    def _on_stderr(p: process.Process, data: ?bytes) -> None:
+        """Handle stderr data from SSH process"""
+        if data is not None:
+            _log.debug("SSH stderr", {"data": data})
+
+    def _on_exit(p: process.Process, exit_code: int, term_signal: ?int) -> None:
+        """Handle SSH process exit"""
+        _log.debug("SSH process exited", {"exit_code": exit_code, "term_signal": str(term_signal) if term_signal is not None else "None"})
+        _process = None
+        _connected = False
+        on_exit(self, exit_code, term_signal)
+
+    def _on_process_error(p: process.Process, error: str) -> None:
+        """Handle SSH process errors"""
+        _log.error("SSH process error", {"error": error})
+        _process = None
+        _connected = False
+        on_error(self, error)
+
+    def send(data: bytes) -> bool:
+        """
+        Send data to the SSH connection
+
+        Args:
+            data: Bytes to send
+
+        Returns:
+            True if data was sent, False if not connected
+        """
+        _proc = _process
+        if _proc is not None and _connected:
+            _proc.write(data)
+            return True
+        else:
+            _log.warning("Attempted to send data on closed connection")
+            return False
+
+    def send_str(data: str) -> bool:
+        """
+        Send string data to the SSH connection
+
+        Args:
+            data: String to send
+
+        Returns:
+            True if data was sent, False if not connected
+        """
+        return send(data.encode())
+
+    def is_connected() -> bool:
+        """Check if SSH connection is established"""
+        return _connected
+
+    def close() -> None:
+        """Close the SSH connection"""
+        _proc = _process
+        if _proc is not None:
+            _log.info("Closing SSH connection")
+            _proc.stop()
+            _process = None
+            _connected = False
+
+    def get_connection_info() -> dict[str, str]:
+        """Get connection information"""
+        return {
+            "address": address,
+            "port": str(port),
+            "username": username,
+            "auth_method": str(get_auth_method()),
+            "subsystem": subsystem if subsystem is not None else "",
+            "connected": str(_connected)
+        }
+
+    # Initialize SSH connection
+    cmd, cmd_env = build_ssh_command()
+    _log.debug("Starting SSH process", {"cmd": cmd, "env_vars": list(cmd_env.keys()) if cmd_env is not None else []})
+
+    _process = process.Process(
+        process.ProcessCap(auth),
+        cmd,
+        _on_stdout,
+        _on_stderr,
+        _on_exit,
+        _on_process_error,
+        env=cmd_env
+    )

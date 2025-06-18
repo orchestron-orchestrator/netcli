@@ -1,0 +1,3 @@
+response:Juniper version info
+state:ready
+commands:['show version']

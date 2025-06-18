@@ -1,0 +1,338 @@
+import testing
+import logging
+import drivers
+
+"""
+Driver State Machine Tests
+
+Tests the driver state machine using async actor pattern with external driving.
+Uses TestSSHWrapper to capture commands and handle_data() to simulate responses.
+"""
+
+actor JuniperInitTester(t: testing.AsyncT):
+    """Test Juniper driver initialization and state transitions"""
+
+    var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
+    var log: logging.Logger = logging.Logger(t.log_handler)
+
+    def run_test() -> None:
+        driver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+
+        # Verify initial state
+        if driver.get_state() != drivers.DRIVER_STATE_INITIALIZING:
+            t.failure(Exception("Expected INITIALIZING state, got: " + driver.get_state()))
+            return
+
+        # Initialize driver
+        driver.initialize()
+
+        # Verify state transition to READY
+        if driver.get_state() != drivers.DRIVER_STATE_READY:
+            t.failure(Exception("Expected READY state after init, got: " + driver.get_state()))
+            return
+
+        # Verify initialization commands were sent
+        commands = test_ssh.get_sent_commands()
+        expected_commands = [
+            "set cli screen-length 0",
+            "set cli screen-width 0",
+            "set cli complete-on-space off",
+            "set cli idle-timeout 0"
+        ]
+
+        if len(commands) != len(expected_commands):
+            t.failure(Exception("Expected " + str(len(expected_commands)) + " commands, got " + str(len(commands))))
+            return
+
+        for i in range(len(expected_commands)):
+            if commands[i] != expected_commands[i]:
+                t.failure(Exception("Expected '" + expected_commands[i] + "', got '" + commands[i] + "'"))
+                return
+
+        # Return structured data about driver state and commands
+        result = "state:" + driver.get_state() + "\ncommands:" + str(commands)
+        t.success(result)
+
+    after 0: run_test()
+
+actor CiscoInitTester(t: testing.AsyncT):
+    """Test Cisco driver initialization and state transitions"""
+
+    var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
+    var log: logging.Logger = logging.Logger(t.log_handler)
+
+    def run_test() -> None:
+        driver = drivers._CiscoIOSXRDriver(drivers.DEVICE_TYPE_CISCO_IOSXR, test_ssh, log)
+
+        # Verify initial state
+        if driver.get_state() != drivers.DRIVER_STATE_INITIALIZING:
+            t.failure(Exception("Expected INITIALIZING state, got: " + driver.get_state()))
+            return
+
+        # Initialize driver
+        driver.initialize()
+
+        # Verify state transition to READY
+        if driver.get_state() != drivers.DRIVER_STATE_READY:
+            t.failure(Exception("Expected READY state after init, got: " + driver.get_state()))
+            return
+
+        # Verify initialization commands were sent
+        commands = test_ssh.get_sent_commands()
+        expected_commands = [
+            "terminal length 0",
+            "terminal width 0",
+            "terminal exec prompt no-timestamp",
+            "terminal no-monitor"
+        ]
+
+        if len(commands) != len(expected_commands):
+            t.failure(Exception("Expected " + str(len(expected_commands)) + " commands, got " + str(len(commands))))
+            return
+
+        for i in range(len(expected_commands)):
+            if commands[i] != expected_commands[i]:
+                t.failure(Exception("Expected '" + expected_commands[i] + "', got '" + commands[i] + "'"))
+                return
+
+        # Return structured data about driver state and commands
+        result = "state:" + driver.get_state() + "\ncommands:" + str(commands)
+        t.success(result)
+
+    after 0: run_test()
+
+actor CommandExecutionTester(t: testing.AsyncT):
+    """Test command execution state flow: READY -> EXECUTING_COMMAND -> READY"""
+
+    var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
+    var log: logging.Logger = logging.Logger(t.log_handler)
+    var driver: drivers._JuniperDriver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+
+    def run_test() -> None:
+        driver.initialize()
+        test_ssh.clear_sent_commands()
+
+        # Verify ready state
+        if not driver.is_ready():
+            t.failure(Exception("Driver not ready for command execution"))
+            return
+
+        # Execute command
+        driver.execute_command(command_callback, "show version")
+
+        # Verify state transition to EXECUTING_COMMAND
+        if driver.get_state() != drivers.DRIVER_STATE_EXECUTING_COMMAND:
+            t.failure(Exception("Expected EXECUTING_COMMAND state, got: " + driver.get_state()))
+            return
+
+        # Simulate device prompt response
+        driver.handle_data(b"show version\nJuniper version info\nuser@device> ")
+
+    def command_callback(err: ?Exception, response: ?str) -> None:
+        if err is not None:
+            t.failure(Exception("Command callback error: " + str(err)))
+            return
+
+        # Verify response
+        if response is None:
+            t.failure(Exception("Expected command response, got None"))
+            return
+
+        # Verify driver returned to READY state
+        if driver.get_state() != drivers.DRIVER_STATE_READY:
+            t.failure(Exception("Expected READY state after command, got: " + driver.get_state()))
+            return
+
+        # Verify command was sent
+        commands = test_ssh.get_sent_commands()
+        if len(commands) != 1:
+            t.failure(Exception("Expected 1 command, got " + str(len(commands))))
+            return
+
+        if commands[0] != "show version":
+            t.failure(Exception("Expected 'show version', got '" + commands[0] + "'"))
+            return
+
+        # Return actual command response and driver state
+        response_text = response if response is not None else "None"
+        result = "response:" + response_text + "\nstate:" + driver.get_state() + "\ncommands:" + str(commands)
+        t.success(result)
+
+    after 0: run_test()
+
+actor ConfigCommitTester(t: testing.AsyncT):
+    """Test configuration and commit state flow"""
+
+    var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
+    var log: logging.Logger = logging.Logger(t.log_handler)
+    var driver: drivers._JuniperDriver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+
+    def run_test() -> None:
+        driver.initialize()
+        test_ssh.clear_sent_commands()
+
+        config_commands = ["set interfaces ge-0/0/0 description test"]
+        driver.configure_and_commit(config_callback, config_commands)
+
+        # Simulate device responses for each state transition
+        # ENTERING_CONFIG -> CONFIG_MODE
+        driver.handle_data(b"configure\nuser@device# ")
+
+        # APPLYING_CONFIG (after config command)
+        driver.handle_data(b"set interfaces ge-0/0/0 description test\nuser@device# ")
+
+        # COMMITTING (after commit)
+        driver.handle_data(b"commit\ncommit complete\nuser@device# ")
+
+        # Back to READY (after exit)
+        driver.handle_data(b"exit\nuser@device> ")
+
+    def config_callback(err: ?Exception, session_log: str) -> None:
+        if err is not None:
+            t.failure(Exception("Config callback error: " + str(err)))
+            return
+
+        # Verify driver returned to READY state
+        if driver.get_state() != drivers.DRIVER_STATE_READY:
+            t.failure(Exception("Expected READY state after config, got: " + driver.get_state()))
+            return
+
+        # Verify all commands were sent
+        commands = test_ssh.get_sent_commands()
+        expected = ["configure", "set interfaces ge-0/0/0 description test", "commit", "exit"]
+
+        if len(commands) != len(expected):
+            t.failure(Exception("Expected " + str(len(expected)) + " commands, got " + str(len(commands))))
+            return
+
+        for i in range(len(expected)):
+            if commands[i] != expected[i]:
+                t.failure(Exception("Expected '" + expected[i] + "', got '" + commands[i] + "'"))
+                return
+
+        # Return session log and driver state
+        result = "session_log:" + session_log + "\nstate:" + driver.get_state() + "\ncommands:" + str(commands)
+        t.success(result)
+
+    after 0: run_test()
+
+actor CommitFailureRollbackTester(t: testing.AsyncT):
+    """Test automatic rollback on commit failure"""
+
+    var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
+    var log: logging.Logger = logging.Logger(t.log_handler)
+    var driver: drivers._JuniperDriver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+
+    def run_test() -> None:
+        driver.initialize()
+        test_ssh.clear_sent_commands()
+
+        config_commands = ["set invalid config"]
+        driver.configure_and_commit(config_callback, config_commands)
+
+        # Simulate flow up to commit failure
+        driver.handle_data(b"configure\nuser@device# ")
+        driver.handle_data(b"set invalid config\nuser@device# ")
+
+        # Simulate commit failure
+        driver.handle_data(b"commit\nerror: commit failed - invalid configuration\nuser@device# ")
+
+        # Simulate rollback completion
+        driver.handle_data(b"rollback\nuser@device# ")
+        driver.handle_data(b"exit\nuser@device> ")
+
+    def config_callback(err: ?Exception, session_log: str) -> None:
+        if err is None:
+            t.failure(Exception("Expected error due to commit failure"))
+            return
+
+        # Verify error indicates rollback occurred
+        error_msg = str(err)
+        if "automatically rolled back" not in error_msg:
+            t.failure(Exception("Expected rollback error message, got: " + error_msg))
+            return
+
+        # Verify rollback commands were sent
+        commands = test_ssh.get_sent_commands()
+        if "rollback" not in str(commands):
+            t.failure(Exception("Expected rollback command in: " + str(commands)))
+            return
+
+        # Return error message, session log, and commands
+        result = "error:" + error_msg + "\nsession_log:" + session_log + "\ncommands:" + str(commands)
+        t.success(result)
+
+    after 0: run_test()
+
+actor StateTransitionValidationTester(t: testing.AsyncT):
+    """Test state transition validation logic"""
+
+    var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
+    var log: logging.Logger = logging.Logger(t.log_handler)
+
+    def run_test() -> None:
+        driver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+
+        # Test valid transitions
+        valid_tests = [
+            (drivers.DRIVER_STATE_READY, drivers.DRIVER_STATE_EXECUTING_COMMAND),
+            (drivers.DRIVER_STATE_READY, drivers.DRIVER_STATE_ENTERING_CONFIG),
+            (drivers.DRIVER_STATE_EXECUTING_COMMAND, drivers.DRIVER_STATE_READY),
+            (drivers.DRIVER_STATE_CONFIG_MODE, drivers.DRIVER_STATE_APPLYING_CONFIG)
+        ]
+
+        for from_state, to_state in valid_tests:
+            if not driver._is_valid_transition(from_state, to_state):
+                t.failure(Exception("Expected valid transition: " + from_state + " -> " + to_state))
+                return
+
+        # Test invalid transitions
+        invalid_tests = [
+            (drivers.DRIVER_STATE_EXECUTING_COMMAND, drivers.DRIVER_STATE_CONFIG_MODE),
+            (drivers.DRIVER_STATE_APPLYING_CONFIG, drivers.DRIVER_STATE_EXECUTING_COMMAND),
+            (drivers.DRIVER_STATE_COMMITTING, drivers.DRIVER_STATE_ENTERING_CONFIG)
+        ]
+
+        for from_state, to_state in invalid_tests:
+            if driver._is_valid_transition(from_state, to_state):
+                t.failure(Exception("Expected invalid transition: " + from_state + " -> " + to_state))
+                return
+
+        # Return transition validation results
+        valid_results = []
+        for from_state, to_state in valid_tests:
+            valid_results.append(from_state + "->" + to_state + ":valid")
+
+        invalid_results = []
+        for from_state, to_state in invalid_tests:
+            invalid_results.append(from_state + "->" + to_state + ":invalid")
+
+        result = "valid_transitions:" + str(valid_results) + "\ninvalid_transitions:" + str(invalid_results)
+        t.success(result)
+
+    after 0: run_test()
+
+# Test functions for acton test runner
+def _test_juniper_driver_initialization(t: testing.AsyncT):
+    """Test Juniper driver initialization"""
+    JuniperInitTester(t)
+
+def _test_cisco_driver_initialization(t: testing.AsyncT):
+    """Test Cisco driver initialization"""
+    CiscoInitTester(t)
+
+def _test_command_execution_state_flow(t: testing.AsyncT):
+    """Test command execution state transitions"""
+    CommandExecutionTester(t)
+
+def _test_configuration_and_commit_flow(t: testing.AsyncT):
+    """Test configuration and commit state flow"""
+    ConfigCommitTester(t)
+
+def _test_commit_failure_automatic_rollback(t: testing.AsyncT):
+    """Test automatic rollback on commit failure"""
+    CommitFailureRollbackTester(t)
+
+def _test_driver_state_transition_validation(t: testing.AsyncT):
+    """Test state transition validation logic"""
+    StateTransitionValidationTester(t)
