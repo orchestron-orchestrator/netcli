@@ -88,7 +88,7 @@ actor SSHClient(auth: WorldCap,
         if auth_method == AUTH_PASSWORD:
             if password is not None:
                 cmd_env = {"SSHPASS": password}
-                cmd = ["/opt/homebrew/bin/sshpass", "-e"] + base_cmd
+                cmd = ["sshpass", "-e"] + base_cmd
             else:
                 cmd = base_cmd
         elif auth_method == AUTH_KEY:

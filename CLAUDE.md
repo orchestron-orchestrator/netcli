@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Structure
 
-This is the netclics package - a CLI client library system built on Acton with the following architecture:
+This is the netcli package - a CLI client library system built on Acton with the following architecture:
 
 - **Build system**: Uses Zig build system (`build.zig`) for compiling generated C code from Acton
 - **Dependencies**: Acton base libraries and ActonDB (configured in `build.zig.zon`)
