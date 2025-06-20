@@ -32,9 +32,17 @@ $(addprefix cli-,$(ROUTERS_XR) $(ROUTERS_CRPD)): cli-%: platform-cli-%
 $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD)):
 	docker run $(INTERACTIVE) --rm --network container:$(TESTENV)-netcli ghcr.io/notconf/notconf:debug netconf-console2 --host $(@:get-dev-config-%=%) --port 830 --user clab --pass clab@123 --get-config
 
+# Filter to remove Junos metadata attributes that change with each commit
+FILTER_JUNOS_METADATA = sed 's/ junos:commit-seconds="[0-9]*"//g; s/ junos:commit-localtime="[^"]*"//g; s/ junos:commit-user="[^"]*"//g'
+
 .phony: test
 test::
-	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD))
+	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD)) | $(FILTER_JUNOS_METADATA) > config-snapshot-before.txt
+	for router in $(ROUTERS_XR) $(ROUTERS_CRPD); do \
+		docker exec $(INTERACTIVE) $(TESTENV)-netcli /router_example --address $$router --port 22 --username clab --password clab@123 --device-type juniper_junos; \
+	done
+	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD)) | $(FILTER_JUNOS_METADATA) > config-snapshot-after.txt
+	diff -u config-snapshot-before.txt config-snapshot-after.txt
 
 .PHONY: save-logs
 save-logs: $(addprefix save-logs-,$(ROUTERS_XR) $(ROUTERS_CRPD))
