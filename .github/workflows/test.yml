@@ -79,5 +79,7 @@ jobs:
       - uses : actions/upload-artifact@v4
         with:
           name: logs-${{ matrix.TESTENV }}
-          path: test/${{ matrix.TESTENV }}/logs
+          path: |
+            test/${{ matrix.TESTENV }}/logs
+            test/${{ matrix.TESTENV }}/config-snapshot-*
         if: ${{ always() }}
