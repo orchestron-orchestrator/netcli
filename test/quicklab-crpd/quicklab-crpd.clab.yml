@@ -24,7 +24,4 @@ topology:
     netcli:
       kind: linux
       image: netcli-base
-      image-pull-policy: if-not-present
-      ports:
-        - "80/tcp"
-        - "830/tcp"
+      image-pull-policy: never
