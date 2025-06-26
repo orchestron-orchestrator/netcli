@@ -1,6 +1,33 @@
 build-netcli-image:
 	docker build -t netcli-base -f ../common/Dockerfile.netcli .
 
+licenses/%:
+# Ensure the symlink to the licenses private repo exists in the project root
+	@if [ ! -d ../../licenses ]; then \
+		echo "Error: licenses directory not found."; \
+		if [ ! -d ../../../licenses ]; then \
+			REMOTE_URL=$$(git remote get-url origin); \
+			if echo "$$REMOTE_URL" | grep -q "^https://"; then \
+				LICENSES_URL="$$(echo "$$REMOTE_URL" | sed -E 's|([^/]+)/[^/]+$$|\1/licenses.git|')"; \
+			else \
+				LICENSES_URL="$$(echo "$$REMOTE_URL" | sed -E 's|:([^/]+)/[^/]+$$|:\1/licenses.git|')"; \
+			fi; \
+			echo "Cloning licenses repository from $$LICENSES_URL"; \
+			(cd ../../.. && git clone "$$LICENSES_URL") || \
+			(echo "Failed to clone licenses repository." && exit 1); \
+		else \
+			echo "Found existing licenses repository at ../../../licenses"; \
+		fi; \
+		echo "Creating symlink to licenses directory..."; \
+		ln -s ../licenses ../../licenses || \
+		(echo "Failed to create symlink to licenses directory." && exit 1); \
+	fi
+# Copy the requested license file to the test directory. We run containerlab in
+# a container, meaning we cannot follow a symlink outside of the current
+# project directory.
+	mkdir -p licenses
+	cp ../../licenses/$* $@
+
 start: build-netcli-image
 	$(CLAB_BIN) deploy --topo $(TESTENV:netcli-%=%).clab.yml --log-level debug --reconfigure
 
