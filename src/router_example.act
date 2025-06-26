@@ -1,8 +1,9 @@
+import argparse
 import logging
 import router_client
 
 
-actor Example(wc, on_done):
+actor Example(wc, on_done, username: str, password: str, address: str, port: int, device_type: str):
     """Example demonstrating simplified router client usage"""
 
     # Create logging handler
@@ -33,14 +34,14 @@ actor Example(wc, on_done):
         """Start the router client example"""
         print("=== Router Client Example ===")
 
-        # Create client with Juniper device type
+        # Create client with provided parameters
         client = router_client.Client(
             auth=wc,
-            address="localhost",  # Example IP
-            port=32814,
-            username="clab",
-            password="clab@123",
-            device_type="juniper_junos",
+            address=address,
+            port=port,
+            username=username,
+            password=password,
+            device_type=device_type,
             log_handler=log_handler
         )
 
@@ -178,4 +179,28 @@ actor main(env):
     def done():
         env.exit(0)
 
-    Example(env.cap, done)
+    def _parse_args():
+        p = argparse.Parser()
+        p.add_option("username", "str", default="clab", help="Username for authentication", short="u")
+        p.add_option("password", "str", default="clab@123", help="Password for authentication", short="p")
+        p.add_option("address", "str", default="localhost", help="Router IP address or hostname", short="a")
+        p.add_option("port", "int", default=32814, help="SSH port number", short="P")
+        p.add_option("device-type", "str", default="juniper_junos", help="Device type (juniper_junos or cisco_iosxr)", short="t")
+        return p.parse(env.argv)
+
+    try:
+        args = _parse_args()
+
+        username = args.get_str("username")
+        password = args.get_str("password")
+        address = args.get_str("address")
+        port = args.get_int("port")
+        device_type = args.get_str("device-type")
+
+        Example(env.cap, done, username, password, address, port, device_type)
+    except argparse.PrintUsage as exc:
+        print(exc.error_message)
+        env.exit(0)
+    except argparse.ArgumentError as exc:
+        print(exc.error_message, err=True)
+        env.exit(1)
