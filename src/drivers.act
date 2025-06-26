@@ -484,7 +484,7 @@ class _CiscoIOSXRDriver(_BaseDriver):
             "terminal length 0",              # Disable pagination
             "terminal width 0",               # Disable line wrapping
             "terminal exec prompt no-timestamp",  # Remove timestamps from prompts
-            "terminal no-monitor"             # Disable console logging interruptions
+            "terminal monitor disable"             # Disable console logging interruptions
         ]
 
         for cmd in init_commands:

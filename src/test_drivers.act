@@ -83,7 +83,7 @@ actor CiscoInitTester(t: testing.AsyncT):
             "terminal length 0",
             "terminal width 0",
             "terminal exec prompt no-timestamp",
-            "terminal no-monitor"
+            "terminal monitor disable"
         ]
 
         if len(commands) != len(expected_commands):

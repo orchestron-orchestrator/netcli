@@ -1,2 +1,2 @@
 state:ready
-commands:['terminal length 0', 'terminal width 0', 'terminal exec prompt no-timestamp', 'terminal no-monitor']
+commands:['terminal length 0', 'terminal width 0', 'terminal exec prompt no-timestamp', 'terminal monitor disable']
