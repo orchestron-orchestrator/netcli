@@ -26,7 +26,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: router_example
-          path: out/bin/router_example
+          path: out/bin/router_example*
 
   net-test:
     strategy:
@@ -52,7 +52,7 @@ jobs:
         with:
           name: router_example
           path: out/bin/
-      - run: chmod a+x out/bin/router_example
+      - run: chmod a+x out/bin/router_example*
       - name: "Check out licenses repo"
         uses: actions/checkout@v4
         with:
