@@ -73,6 +73,9 @@ actor SSHClient(auth: WorldCap,
         # Add port
         base_cmd.extend(["-p", str(port)])
 
+        # Force pseudo-terminal allocation (even for stdin piped through sshpass)
+        base_cmd.append("-tt")
+
         # Add username
         base_cmd.extend(["-l", username])
 

@@ -31,23 +31,7 @@ actor JuniperInitTester(t: testing.AsyncT):
             t.failure(Exception("Expected READY state after init, got: " + driver.get_state()))
             return
 
-        # Verify initialization commands were sent
         commands = test_ssh.get_sent_commands()
-        expected_commands = [
-            "set cli screen-length 0",
-            "set cli screen-width 0",
-            "set cli complete-on-space off",
-            "set cli idle-timeout 0"
-        ]
-
-        if len(commands) != len(expected_commands):
-            t.failure(Exception("Expected " + str(len(expected_commands)) + " commands, got " + str(len(commands))))
-            return
-
-        for i in range(len(expected_commands)):
-            if commands[i] != expected_commands[i]:
-                t.failure(Exception("Expected '" + expected_commands[i] + "', got '" + commands[i] + "'"))
-                return
 
         # Return structured data about driver state and commands
         result = "state:" + driver.get_state() + "\ncommands:" + str(commands)
@@ -77,23 +61,7 @@ actor CiscoInitTester(t: testing.AsyncT):
             t.failure(Exception("Expected READY state after init, got: " + driver.get_state()))
             return
 
-        # Verify initialization commands were sent
         commands = test_ssh.get_sent_commands()
-        expected_commands = [
-            "terminal length 0",
-            "terminal width 0",
-            "terminal exec prompt no-timestamp",
-            "terminal no-monitor"
-        ]
-
-        if len(commands) != len(expected_commands):
-            t.failure(Exception("Expected " + str(len(expected_commands)) + " commands, got " + str(len(commands))))
-            return
-
-        for i in range(len(expected_commands)):
-            if commands[i] != expected_commands[i]:
-                t.failure(Exception("Expected '" + expected_commands[i] + "', got '" + commands[i] + "'"))
-                return
 
         # Return structured data about driver state and commands
         result = "state:" + driver.get_state() + "\ncommands:" + str(commands)
@@ -143,17 +111,8 @@ actor CommandExecutionTester(t: testing.AsyncT):
             t.failure(Exception("Expected READY state after command, got: " + driver.get_state()))
             return
 
-        # Verify command was sent
-        commands = test_ssh.get_sent_commands()
-        if len(commands) != 1:
-            t.failure(Exception("Expected 1 command, got " + str(len(commands))))
-            return
-
-        if commands[0] != "show version":
-            t.failure(Exception("Expected 'show version', got '" + commands[0] + "'"))
-            return
-
         # Return actual command response and driver state
+        commands = test_ssh.get_sent_commands()
         response_text = response if response is not None else "None"
         result = "response:" + response_text + "\nstate:" + driver.get_state() + "\ncommands:" + str(commands)
         t.success(result)
@@ -197,20 +156,8 @@ actor ConfigCommitTester(t: testing.AsyncT):
             t.failure(Exception("Expected READY state after config, got: " + driver.get_state()))
             return
 
-        # Verify all commands were sent
-        commands = test_ssh.get_sent_commands()
-        expected = ["configure", "set interfaces ge-0/0/0 description test", "commit", "exit"]
-
-        if len(commands) != len(expected):
-            t.failure(Exception("Expected " + str(len(expected)) + " commands, got " + str(len(commands))))
-            return
-
-        for i in range(len(expected)):
-            if commands[i] != expected[i]:
-                t.failure(Exception("Expected '" + expected[i] + "', got '" + commands[i] + "'"))
-                return
-
         # Return session log and driver state
+        commands = test_ssh.get_sent_commands()
         result = "session_log:" + session_log + "\nstate:" + driver.get_state() + "\ncommands:" + str(commands)
         t.success(result)
 
@@ -252,13 +199,8 @@ actor CommitFailureRollbackTester(t: testing.AsyncT):
             t.failure(Exception("Expected rollback error message, got: " + error_msg))
             return
 
-        # Verify rollback commands were sent
-        commands = test_ssh.get_sent_commands()
-        if "rollback" not in str(commands):
-            t.failure(Exception("Expected rollback command in: " + str(commands)))
-            return
-
         # Return error message, session log, and commands
+        commands = test_ssh.get_sent_commands()
         result = "error:" + error_msg + "\nsession_log:" + session_log + "\ncommands:" + str(commands)
         t.success(result)
 

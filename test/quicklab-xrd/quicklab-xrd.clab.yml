@@ -1,4 +1,4 @@
-name: netcli-quicklab-crpd
+name: netcli-quicklab-xrd
 # The prefix is prepended to container node names. We override the default
 # "clab-<lab-name>-" prefix here by using the "__lab-name" magic value.
 # Containerlab replaces it with the lab name defined above. This ensures we're
@@ -7,20 +7,18 @@ name: netcli-quicklab-crpd
 prefix: __lab-name
 
 mgmt:
-  network: netcli-quicklab-crpd
+  network: netcli-quicklab-xrd
   ipv4-subnet: auto
   ipv6-subnet: auto
 
 topology:
   kinds:
-    crpd:
-      image: ${IMAGE_PATH}crpd:24.4R1.9
-      startup-config: crpd-startup.conf
-      license: licenses/juniper_crpd24.lic
-      image-pull-policy: if-not-present
+    xrd:
+      image: ${IMAGE_PATH}ios-xr/xrd-control-plane:24.1.1
+      startup-config: xrd-startup.conf
   nodes:
-    crpd:
-      kind: crpd
+    xrd:
+      kind: xrd
     netcli:
       kind: linux
       image: netcli-base

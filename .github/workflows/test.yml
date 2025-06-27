@@ -26,13 +26,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: router_example
-          path: out/bin/router_example
+          path: out/bin/router_example*
 
   net-test:
     strategy:
       fail-fast: false
       matrix:
-        TESTENV: [quicklab-crpd]
+        TESTENV: [quicklab-crpd, quicklab-xrd]
     runs-on: ubuntu-24.04
     env:
       IMAGE_PATH: ${{ secrets.IMAGE_PATH || format('ghcr.io/{0}/', github.repository) }}
@@ -52,7 +52,7 @@ jobs:
         with:
           name: router_example
           path: out/bin/
-      - run: chmod a+x out/bin/router_example
+      - run: chmod a+x out/bin/router_example*
       - name: "Check out licenses repo"
         uses: actions/checkout@v4
         with:

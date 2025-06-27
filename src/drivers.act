@@ -484,7 +484,7 @@ class _CiscoIOSXRDriver(_BaseDriver):
             "terminal length 0",              # Disable pagination
             "terminal width 0",               # Disable line wrapping
             "terminal exec prompt no-timestamp",  # Remove timestamps from prompts
-            "terminal no-monitor"             # Disable console logging interruptions
+            "terminal monitor disable"             # Disable console logging interruptions
         ]
 
         for cmd in init_commands:
@@ -530,7 +530,7 @@ class _CiscoIOSXRDriver(_BaseDriver):
     def _get_rollback_commands(self, commits_back: int) -> list[str]:
         """Get Cisco IOS XR rollback commands"""
         rollback_cmd = "rollback configuration last " + str(commits_back)
-        return ["configure terminal", rollback_cmd, "commit", "end"]
+        return [rollback_cmd]
 
     def get_device_info(self) -> dict[str, str]:
         """Get Cisco IOS XR device info"""

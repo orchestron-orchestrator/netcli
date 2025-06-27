@@ -39,10 +39,10 @@ WAIT?=60
 wait: $(addprefix platform-wait-,$(ROUTERS_XR) $(ROUTERS_CRPD))
 
 copy:
-	docker cp ../../out/bin/router_example $(TESTENV)-netcli:/router_example
+	docker cp ../../out/bin/$(TEST_BINARY) $(TESTENV)-netcli:/$(TEST_BINARY)
 
 run:
-	docker exec $(INTERACTIVE) $(TESTENV)-netcli /router_example --rts-bt-dbg
+	docker exec $(INTERACTIVE) $(TESTENV)-netcli /$(TEST_BINARY) --rts-bt-dbg
 
 ifndef CI
 INTERACTIVE=-it
@@ -66,7 +66,7 @@ FILTER_JUNOS_METADATA = sed 's/ junos:commit-seconds="[0-9]*"//g; s/ junos:commi
 test::
 	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD)) | $(FILTER_JUNOS_METADATA) > config-snapshot-before.txt
 	for router in $(ROUTERS_XR) $(ROUTERS_CRPD); do \
-		docker exec $(INTERACTIVE) $(TESTENV)-netcli /router_example --address $$router --port 22 --username clab --password clab@123 --device-type juniper_junos; \
+		docker exec $(INTERACTIVE) $(TESTENV)-netcli /$(TEST_BINARY) --address $$router --port 22 --username clab --password clab@123; \
 	done
 	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD)) | $(FILTER_JUNOS_METADATA) > config-snapshot-after.txt
 	diff -u config-snapshot-before.txt config-snapshot-after.txt

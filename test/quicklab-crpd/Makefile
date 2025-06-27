@@ -1,4 +1,5 @@
 TESTENV=netcli-quicklab-crpd
+TEST_BINARY=router_example_juniper
 
 ROUTERS_XR=
 ROUTERS_CRPD=crpd

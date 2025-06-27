@@ -3,7 +3,7 @@ import logging
 import router_client
 
 
-actor Example(wc, on_done, username: str, password: str, address: str, port: int, device_type: str):
+actor Example(wc, on_done, username: str, password: str, address: str, port: int):
     """Example demonstrating simplified router client usage"""
 
     # Create logging handler
@@ -41,7 +41,7 @@ actor Example(wc, on_done, username: str, password: str, address: str, port: int
             port=port,
             username=username,
             password=password,
-            device_type=device_type,
+            device_type="juniper_junos",
             log_handler=log_handler
         )
 
@@ -185,7 +185,6 @@ actor main(env):
         p.add_option("password", "str", default="clab@123", help="Password for authentication", short="p")
         p.add_option("address", "str", default="localhost", help="Router IP address or hostname", short="a")
         p.add_option("port", "int", default=32814, help="SSH port number", short="P")
-        p.add_option("device-type", "str", default="juniper_junos", help="Device type (juniper_junos or cisco_iosxr)", short="t")
         return p.parse(env.argv)
 
     try:
@@ -195,9 +194,8 @@ actor main(env):
         password = args.get_str("password")
         address = args.get_str("address")
         port = args.get_int("port")
-        device_type = args.get_str("device-type")
 
-        Example(env.cap, done, username, password, address, port, device_type)
+        Example(env.cap, done, username, password, address, port)
     except argparse.PrintUsage as exc:
         print(exc.error_message)
         env.exit(0)
