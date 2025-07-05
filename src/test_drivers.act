@@ -9,7 +9,7 @@ Tests the driver state machine using async actor pattern with external driving.
 Uses TestSSHWrapper to capture commands and handle_data() to simulate responses.
 """
 
-actor JuniperInitTester(t: testing.AsyncT):
+actor _test_juniper_driver_initialization(t: testing.AsyncT):
     """Test Juniper driver initialization and state transitions"""
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
@@ -39,7 +39,7 @@ actor JuniperInitTester(t: testing.AsyncT):
 
     after 0: run_test()
 
-actor CiscoInitTester(t: testing.AsyncT):
+actor _test_cisco_driver_initialization(t: testing.AsyncT):
     """Test Cisco driver initialization and state transitions"""
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
@@ -69,7 +69,7 @@ actor CiscoInitTester(t: testing.AsyncT):
 
     after 0: run_test()
 
-actor CommandExecutionTester(t: testing.AsyncT):
+actor _test_command_execution_state_flow(t: testing.AsyncT):
     """Test command execution state flow: READY -> EXECUTING_COMMAND -> READY"""
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
@@ -119,7 +119,7 @@ actor CommandExecutionTester(t: testing.AsyncT):
 
     after 0: run_test()
 
-actor ConfigCommitTester(t: testing.AsyncT):
+actor _test_configuration_and_commit_flow(t: testing.AsyncT):
     """Test configuration and commit state flow"""
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
@@ -163,7 +163,7 @@ actor ConfigCommitTester(t: testing.AsyncT):
 
     after 0: run_test()
 
-actor CommitFailureRollbackTester(t: testing.AsyncT):
+actor _test_commit_failure_automatic_rollback(t: testing.AsyncT):
     """Test automatic rollback on commit failure"""
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
@@ -206,7 +206,7 @@ actor CommitFailureRollbackTester(t: testing.AsyncT):
 
     after 0: run_test()
 
-actor StateTransitionValidationTester(t: testing.AsyncT):
+actor _test_driver_state_transition_validation(t: testing.AsyncT):
     """Test state transition validation logic"""
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
@@ -253,28 +253,3 @@ actor StateTransitionValidationTester(t: testing.AsyncT):
         t.success(result)
 
     after 0: run_test()
-
-# Test functions for acton test runner
-def _test_juniper_driver_initialization(t: testing.AsyncT):
-    """Test Juniper driver initialization"""
-    JuniperInitTester(t)
-
-def _test_cisco_driver_initialization(t: testing.AsyncT):
-    """Test Cisco driver initialization"""
-    CiscoInitTester(t)
-
-def _test_command_execution_state_flow(t: testing.AsyncT):
-    """Test command execution state transitions"""
-    CommandExecutionTester(t)
-
-def _test_configuration_and_commit_flow(t: testing.AsyncT):
-    """Test configuration and commit state flow"""
-    ConfigCommitTester(t)
-
-def _test_commit_failure_automatic_rollback(t: testing.AsyncT):
-    """Test automatic rollback on commit failure"""
-    CommitFailureRollbackTester(t)
-
-def _test_driver_state_transition_validation(t: testing.AsyncT):
-    """Test state transition validation logic"""
-    StateTransitionValidationTester(t)
