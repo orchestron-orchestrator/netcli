@@ -1,2 +1,2 @@
-valid_transitions:['ready->executing_command:valid', 'ready->entering_config:valid', 'executing_command->ready:valid', 'config_mode->applying_config:valid']
-invalid_transitions:['executing_command->config_mode:invalid', 'applying_config->executing_command:invalid', 'committing->entering_config:invalid']
+valid_transitions:['ready->executing_command:valid', 'ready->pre_config:valid', 'ready->entering_config:valid', 'pre_config->entering_config:valid', 'executing_command->ready:valid', 'config_mode->applying_config:valid', 'applying_config->aborting_config:valid']
+invalid_transitions:['executing_command->config_mode:invalid', 'applying_config->executing_command:invalid', 'committing->entering_config:invalid', 'pre_config->config_mode:invalid', 'pre_config->ready:invalid']

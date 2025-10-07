@@ -1,0 +1,316 @@
+import argparse
+import logging
+import router_client
+
+
+actor IOSXEExample(wc, on_done, username: str, password: str, address: str, port: int):
+    """Example demonstrating Cisco IOS XE router client usage"""
+
+    # Create logging handler
+    log_handler = logging.Handler("iosxe_router_example")
+    log_handler.set_output_level(logging.DEBUG)
+    log_handler.add_sink(logging.StdoutSink())
+
+    var client: ?router_client.Client = None
+
+    def on_command_result(next):
+        def wrap(err: ?Exception, response: ?str):
+            """Handle command execution results"""
+            if err is not None:
+                print("Command failed:", str(err))
+            else:
+                print("Command result:", response if response is not None else "No response")
+            next()
+        return wrap
+
+    def on_config_success(response: str) -> None:
+        """Handle successful configuration"""
+        print("Configuration applied and saved successfully:", response)
+        # Proceed to show configuration after successful apply
+        show_config()
+
+    def on_config_error(err: Exception, response: str) -> None:
+        """Handle configuration errors"""
+        print("Configuration failed:", str(err))
+        if len(response) > 0:
+            print("Response:", response)
+        # Skip to test_bad_config on error
+        test_bad_config()
+
+    def start_example() -> None:
+        """Start the Cisco IOS XE router client example"""
+        print("=== Cisco IOS XE Router Client Example ===")
+        print("Note: IOS XE applies configuration changes immediately")
+        print("Archive feature will be used for rollback support")
+        print("")
+
+        # Create client with Cisco IOS XE parameters
+        client = router_client.Client(
+            auth=wc,
+            address=address,
+            port=port,
+            username=username,
+            password=password,
+            device_type="cisco_iosxe",
+            log_handler=log_handler
+        )
+
+        # Wait a bit for connection to establish
+        after 2.0: check_archive_config()
+
+    def check_archive_config() -> None:
+        """Check if archive is configured on the device"""
+        c = client
+        if c is not None and c.is_connected():
+            print("Checking archive configuration...")
+            c.cmd(on_archive_check, "show archive")
+            after 2.0: execute_commands()
+        else:
+            print("Client not connected yet, retrying...")
+            after 1.0: check_archive_config()
+
+    def on_archive_check(err: ?Exception, response: ?str) -> None:
+        """Check archive configuration result"""
+        if err is not None:
+            print("Archive check failed:", str(err))
+        else:
+            response_str = response if response is not None else ""
+            if "Archive feature not enabled" in response_str:
+                print("WARNING: Archive feature not configured on device")
+                print("Rollback functionality may not work without archive configuration")
+                print("To configure archive, run these commands manually:")
+                print("  archive")
+                print("  path flash:archive-config")
+                print("  maximum 10")
+                print("  write-memory")
+            else:
+                print("Archive configuration found:", response_str[:200])
+
+    def execute_commands() -> None:
+        """Execute some example commands"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Executing show commands ===")
+            print("Executing show version command...")
+            c.cmd(on_command_result(show_interfaces), "show version")
+        else:
+            print("Client not connected")
+
+    def show_interfaces() -> None:
+        """Show interface status"""
+        c = client
+        if c is not None and c.is_connected():
+            print("Executing show ip interface brief...")
+            c.cmd(on_command_result(execute_config), "show ip interface brief")
+        else:
+            print("Client not connected")
+
+    def execute_config() -> None:
+        """Execute configuration example"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Applying configuration ===")
+            print("Note: IOS XE will apply changes immediately")
+            print("Archive checkpoint will be created automatically")
+
+            config_commands = [
+                "interface Loopback100",
+                "description Test loopback for IOS XE",
+                "ip address 10.10.10.10 255.255.255.255",
+                "no shutdown"
+            ]
+
+            print("Applying configuration:")
+            for cmd in config_commands:
+                print(f"  {cmd}")
+
+            c.configure_and_commit(on_config_success, on_config_error, config_commands)
+        else:
+            print("Client not connected for config")
+
+    def show_config():
+        """Show current configuration"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Verifying configuration ===")
+            print("Fetching current configuration...")
+            c.cmd(on_command_result(verify_interface_exists), "show running-config interface Loopback100")
+        else:
+            print("Client not connected for config fetch")
+
+    def on_interface_check(err: ?Exception, response: ?str) -> None:
+        """Handle interface verification results"""
+        if err is not None:
+            print("Interface check failed:", str(err))
+        else:
+            response_str = response if response is not None else ""
+            if "Loopback100" in response_str and "10.10.10.10" in response_str:
+                print("✓ VERIFICATION: Loopback100 interface exists with IP 10.10.10.10")
+            else:
+                print("✗ VERIFICATION: Loopback100 interface not found or missing IP")
+            print("Interface details:", response_str)
+        test_bad_config()  # Proceed to next test
+
+    def verify_interface_exists():
+        """Verify that Loopback100 interface exists after configuration"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Verifying Loopback100 interface exists ===")
+            c.cmd(on_interface_check, "show ip interface Loopback100")
+        else:
+            print("Client not connected for interface verification")
+
+    def test_bad_config() -> None:
+        """Test configuration error handling with automatic rollback"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Testing error handling ===")
+            print("Applying invalid configuration to test automatic rollback...")
+
+            bad_config = [
+                "interface Loopback101",
+                "ip address invalid.address"  # This will fail
+            ]
+
+            c.configure_and_commit(on_bad_config_success, on_bad_config_error, bad_config)
+        else:
+            print("Client not connected for error test")
+
+    def on_bad_config_success(response: str) -> None:
+        """This should not be called for bad config"""
+        print("ERROR: Bad configuration was accepted (unexpected):", response)
+        test_rollback()  # Continue to rollback test anyway
+
+    def on_bad_config_error(err: Exception, response: str) -> None:
+        """Expected error handler for bad configuration"""
+        print("✓ Configuration error detected as expected:", str(err))
+        if "rolled back" in str(err).lower():
+            print("✓ Automatic rollback completed")
+        if len(response) > 0:
+            print("Error details:", response[:200])
+        test_rollback()  # Proceed to rollback test
+
+    def on_rollback_result(err: ?Exception, session_log: str) -> None:
+        """Handle rollback results"""
+        if err is not None:
+            print("Rollback failed:", str(err))
+            if len(session_log) > 0:
+                print("Session log:", session_log)
+        else:
+            print("✓ Rollback completed successfully")
+            if len(session_log) > 0 and len(session_log) < 500:
+                print("Rollback output:", session_log)
+        show_config_after_rollback()  # Proceed to verify rollback
+
+    def test_rollback() -> None:
+        """Test explicit rollback functionality"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Testing Explicit Rollback ===")
+            print("Rolling back to remove Loopback100 configuration...")
+            print("Note: This requires archive to be configured on the device")
+            c.rollback_commits(on_rollback_result, 1)
+        else:
+            print("Client not connected for rollback test")
+
+    def show_config_after_rollback():
+        """Show configuration after rollback to verify changes"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Verifying rollback results ===")
+            print("Fetching configuration after rollback...")
+            c.cmd(on_command_result(verify_interface_removed), "show running-config interface Loopback100")
+        else:
+            print("Client not connected for post-rollback config fetch")
+
+    def on_interface_check_after_rollback(err: ?Exception, response: ?str) -> None:
+        """Handle interface verification after rollback"""
+        if err is not None:
+            # In IOS XE, if interface doesn't exist, we might get an error
+            print("Interface check after rollback:", str(err))
+            if "Invalid" in str(err) or "does not exist" in str(err):
+                print("✓ VERIFICATION: Loopback100 interface removed after rollback")
+        else:
+            response_str = response if response is not None else ""
+            # Check if the interface still has our test configuration
+            if "10.10.10.10" not in response_str and "Test loopback" not in response_str:
+                print("✓ VERIFICATION: Loopback100 configuration rolled back successfully")
+            else:
+                print("✗ VERIFICATION: Loopback100 still has test configuration")
+            if len(response_str) > 0:
+                print("Post-rollback interface status:", response_str[:200])
+        show_archive_log()  # Proceed to show archive log
+
+    def verify_interface_removed():
+        """Verify that Loopback100 interface configuration is removed after rollback"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Final verification ===")
+            c.cmd(on_interface_check_after_rollback, "show ip interface Loopback100")
+        else:
+            print("Client not connected for post-rollback interface verification")
+
+    def show_archive_log() -> None:
+        """Show archive log to see configuration changes"""
+        c = client
+        if c is not None and c.is_connected():
+            print("\n=== Archive log ===")
+            c.cmd(on_archive_log, "show archive log config all")
+        else:
+            print("Client not connected for archive log")
+            cleanup()  # If not connected, proceed to cleanup anyway
+
+    def on_archive_log(err: ?Exception, response: ?str) -> None:
+        """Handle archive log output"""
+        if err is not None:
+            print("Could not fetch archive log:", str(err))
+        else:
+            response_str = response if response is not None else ""
+            if len(response_str) > 0:
+                print("Recent configuration changes:")
+                # Show first 500 chars of archive log
+                print(response_str[:500])
+                if len(response_str) > 500:
+                    print("... (truncated)")
+        cleanup()  # Proceed to cleanup
+
+    def cleanup() -> None:
+        """Clean up the example"""
+        print("\n=== Cleanup ===")
+        c = client
+        if c is not None:
+            c.disconnect()
+        print("Cisco IOS XE example completed")
+        on_done()
+
+    # Start the example
+    start_example()
+
+actor main(env):
+    """Main entry point for Cisco IOS XE example"""
+    def done():
+        env.exit(0)
+
+    def _parse_args():
+        p = argparse.Parser()
+        p.add_option("username", "str", default="admin", help="Username for authentication", short="u")
+        p.add_option("password", "str", default="admin", help="Password for authentication", short="p")
+        p.add_option("address", "str", default="localhost", help="Router IP address or hostname", short="a")
+        p.add_option("port", "int", default=22, help="SSH port number", short="P")
+        return p.parse(env.argv)
+
+    try:
+        args = _parse_args()
+
+        username = args.get_str("username")
+        password = args.get_str("password")
+        address = args.get_str("address")
+        port = args.get_int("port")
+
+        IOSXEExample(env.cap, done, username, password, address, port)
+    except argparse.PrintUsage as exc:
+        print(exc.error_message)
+        env.exit(0)
+    except argparse.ArgumentError as exc:
+        print(exc.error_message, err=True)
+        env.exit(1)

@@ -1,6 +1,7 @@
 import logging
 import ssh
 import re
+import testing
 import time
 
 """Router driver auto-detection and base classes"""
@@ -45,11 +46,13 @@ class TestSSHWrapper(SSHClientWrapper):
 DEVICE_TYPE_UNKNOWN: str = "unknown"
 DEVICE_TYPE_JUNIPER: str = "juniper_junos"
 DEVICE_TYPE_CISCO_IOSXR: str = "cisco_iosxr"
+DEVICE_TYPE_CISCO_IOSXE: str = "cisco_iosxe"
 
 # Driver states
 DRIVER_STATE_INITIALIZING: str = "initializing"
 DRIVER_STATE_READY: str = "ready"
 DRIVER_STATE_EXECUTING_COMMAND: str = "executing_command"
+DRIVER_STATE_PRE_CONFIG: str = "pre_config"  # New state for pre-config operations
 DRIVER_STATE_ENTERING_CONFIG: str = "entering_config"
 DRIVER_STATE_CONFIG_MODE: str = "config_mode"
 DRIVER_STATE_APPLYING_CONFIG: str = "applying_config"
@@ -126,11 +129,12 @@ class _BaseDriver(_Driver):
         """Check if state transition is valid"""
         valid_transitions = {
             DRIVER_STATE_INITIALIZING: [DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
-            DRIVER_STATE_READY: [DRIVER_STATE_EXECUTING_COMMAND, DRIVER_STATE_ENTERING_CONFIG, DRIVER_STATE_ROLLING_BACK, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_READY: [DRIVER_STATE_EXECUTING_COMMAND, DRIVER_STATE_PRE_CONFIG, DRIVER_STATE_ENTERING_CONFIG, DRIVER_STATE_ROLLING_BACK, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
             DRIVER_STATE_EXECUTING_COMMAND: [DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_PRE_CONFIG: [DRIVER_STATE_ENTERING_CONFIG, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
             DRIVER_STATE_ENTERING_CONFIG: [DRIVER_STATE_CONFIG_MODE, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
             DRIVER_STATE_CONFIG_MODE: [DRIVER_STATE_APPLYING_CONFIG, DRIVER_STATE_ABORTING_CONFIG, DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
-            DRIVER_STATE_APPLYING_CONFIG: [DRIVER_STATE_COMMITTING, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
+            DRIVER_STATE_APPLYING_CONFIG: [DRIVER_STATE_COMMITTING, DRIVER_STATE_ABORTING_CONFIG, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
             DRIVER_STATE_COMMITTING: [DRIVER_STATE_READY, DRIVER_STATE_ABORTING_CONFIG, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
             DRIVER_STATE_ABORTING_CONFIG: [DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
             DRIVER_STATE_ROLLING_BACK: [DRIVER_STATE_READY, DRIVER_STATE_ERROR, DRIVER_STATE_DISCONNECTED],
@@ -186,6 +190,7 @@ class _BaseDriver(_Driver):
 
     def _handle_prompt_received(self) -> None:
         """Handle when prompt is received"""
+        self.log.debug("_handle_prompt_received", {"state": self._state, "output_buffer": self._output_buffer})
         if self._state == DRIVER_STATE_EXECUTING_COMMAND:
             # Extract command output
             cmd = self._current_command
@@ -199,6 +204,18 @@ class _BaseDriver(_Driver):
 
             self._transition_to_state(DRIVER_STATE_READY)
             self._output_buffer = ""
+
+        elif self._state == DRIVER_STATE_PRE_CONFIG:
+            # Pre-config command completed, now enter config mode
+            # Store any output from pre-config command (e.g., archive name for IOS XE)
+            if self._handle_pre_config_output(self._output_buffer):
+                self._output_buffer = ""
+
+                # Now transition to entering config mode
+                self._transition_to_state(DRIVER_STATE_ENTERING_CONFIG)
+                config_cmds = self._get_config_commands()
+                for cmd in config_cmds:
+                    self.ssh_client.send_str(cmd + "\n")
 
         elif self._state == DRIVER_STATE_ENTERING_CONFIG:
             self._transition_to_state(DRIVER_STATE_CONFIG_MODE)
@@ -216,23 +233,29 @@ class _BaseDriver(_Driver):
             self._output_buffer = ""
 
         elif self._state == DRIVER_STATE_APPLYING_CONFIG:
-            if len(self._config_commands) > 0:
+            # Check if the last command failed before proceeding
+            if self._commit_failed(self._output_buffer):
+                self.log.warning("Configuration command failed", {"output": self._output_buffer})
+                self._handle_configuration_failure()
+                self._output_buffer = ""
+            elif len(self._config_commands) > 0:
                 # Send next config command
                 cmd = self._config_commands.pop(0)
                 self.ssh_client.send_str(cmd + "\n")
+                self._output_buffer = ""
             else:
                 # All config commands sent, proceed to commit
                 self._transition_to_state(DRIVER_STATE_COMMITTING)
                 commit_cmds = self._get_commit_commands()
                 for cmd in commit_cmds:
                     self.ssh_client.send_str(cmd + "\n")
-            self._output_buffer = ""
+                self._output_buffer = ""
 
         elif self._state == DRIVER_STATE_COMMITTING:
             # Check if commit succeeded or failed
             if self._commit_failed(self._output_buffer):
-                # Commit failed - trigger automatic rollback
-                self._handle_commit_failure()
+                # Commit failed - trigger abort/rollback
+                self._handle_configuration_failure()
             else:
                 # Configuration committed successfully
                 config_callback = self._config_callback
@@ -244,11 +267,11 @@ class _BaseDriver(_Driver):
                 self._output_buffer = ""
 
         elif self._state == DRIVER_STATE_ABORTING_CONFIG:
-            # Configuration aborted successfully (automatic rollback after commit failure)
+            # Configuration aborted successfully
             config_callback = self._config_callback
             if config_callback is not None:
-                # Report commit failure but successful rollback
-                abort_error = Exception("Configuration commit failed but was automatically rolled back")
+                # Report configuration failure and abort result
+                abort_error = Exception("Configuration failed and was aborted")
                 config_callback(abort_error, self._session_log)
                 self._config_callback = None
 
@@ -310,6 +333,14 @@ class _BaseDriver(_Driver):
         """Get device-specific commit commands - must be implemented by subclasses"""
         raise NotImplementedError("_get_commit_commands must be implemented by subclasses")
 
+    def _get_pre_config_commands(self) -> list[str]:
+        """Get commands to execute before entering config mode - override in subclasses if needed"""
+        return []
+
+    proc def _handle_pre_config_output(self, output: str) -> bool:
+        """Handle output from pre-config commands - override in subclasses if needed"""
+        return True
+
     def configure_and_commit(self, cb: action(err: ?Exception, session_log: str) -> None, config: list[str]) -> None:
         """Apply configuration and commit atomically with automatic rollback on failure"""
         if self._state != DRIVER_STATE_READY:
@@ -318,18 +349,27 @@ class _BaseDriver(_Driver):
 
         self._config_callback = cb
         self._config_commands = config.copy()
-        self._transition_to_state(DRIVER_STATE_ENTERING_CONFIG)
         self._output_buffer = ""
         self._session_log = ""
 
-        # Enter config mode using device-specific commands
-        config_cmds = self._get_config_commands()
-        for cmd in config_cmds:
-            self.ssh_client.send_str(cmd + "\n")
+        # Check if we need to do pre-config operations (e.g., archive checkpoint for IOS XE)
+        pre_config_cmds = self._get_pre_config_commands()
+        if len(pre_config_cmds) > 0:
+            # Transition to PRE_CONFIG state and execute pre-config commands
+            self._transition_to_state(DRIVER_STATE_PRE_CONFIG)
+            for cmd in pre_config_cmds:
+                self.ssh_client.send_str(cmd + "\n")
+        else:
+            # No pre-config needed, go straight to entering config mode
+            self._transition_to_state(DRIVER_STATE_ENTERING_CONFIG)
+            # Enter config mode using device-specific commands
+            config_cmds = self._get_config_commands()
+            for cmd in config_cmds:
+                self.ssh_client.send_str(cmd + "\n")
 
-    def _handle_commit_failure(self) -> None:
-        """Handle commit failure by automatically rolling back"""
-        self.log.warning("Commit failed, automatically rolling back configuration")
+    def _handle_configuration_failure(self) -> None:
+        """Handle configuration failure - platform specific behavior"""
+        self.log.warning("Configuration failed, aborting configuration")
         self._transition_to_state(DRIVER_STATE_ABORTING_CONFIG)
 
         # Send device-specific abort commands
@@ -357,11 +397,11 @@ class _BaseDriver(_Driver):
         for cmd in rollback_cmds:
             self.ssh_client.send_str(cmd + "\n")
 
-    def _get_abort_commands(self) -> list[str]:
+    proc def _get_abort_commands(self) -> list[str]:
         """Get device-specific abort commands - must be implemented by subclasses"""
         raise NotImplementedError("_get_abort_commands must be implemented by subclasses")
 
-    def _get_rollback_commands(self, commits_back: int) -> list[str]:
+    proc def _get_rollback_commands(self, commits_back: int) -> list[str]:
         """Get device-specific rollback commands - must be implemented by subclasses"""
         raise NotImplementedError("_get_rollback_commands must be implemented by subclasses")
 
@@ -398,6 +438,8 @@ def create_driver(device_type: str, ssh_client: SSHClientWrapper, log: logging.L
         return _JuniperDriver(device_type, ssh_client, log)
     elif device_type == DEVICE_TYPE_CISCO_IOSXR:
         return _CiscoIOSXRDriver(device_type, ssh_client, log)
+    elif device_type == DEVICE_TYPE_CISCO_IOSXE:
+        return _CiscoIOSXEDriver(device_type, ssh_client, log)
     else:
         log.warning("Unsupported device type", {"device_type": device_type})
         return None
@@ -539,3 +581,153 @@ class _CiscoIOSXRDriver(_BaseDriver):
             "vendor": "Cisco",
             "os": "IOS XR"
         }
+
+class _CiscoIOSXEDriver(_BaseDriver):
+    """
+    Cisco IOS XE driver implementation
+
+    Reuses base driver functionality with platform-specific:
+    - Prompt patterns
+    - Error patterns
+    - Command syntax
+    - Pre-config archive checkpoint with rollback on failure
+    """
+
+    _archive_checkpoint_stack: list[str]  # Stack of archive checkpoints for rollback
+
+    def __init__(self, device_type: str, ssh_client: SSHClientWrapper, log: logging.Logger):
+        _BaseDriver.__init__(self, device_type, ssh_client, log)
+        self._archive_checkpoint_stack = []
+
+    def initialize(self) -> None:
+        """Initialize Cisco IOS XE driver"""
+        self.log.info("Initializing Cisco IOS XE driver")
+
+        # Send initialization commands
+        init_commands = [
+            "terminal length 0",              # Disable pagination
+            "terminal width 0"                # Disable line wrapping
+        ]
+
+        for cmd in init_commands:
+            self.ssh_client.send_str(cmd + "\n")
+
+        self._transition_to_state(DRIVER_STATE_READY)
+
+    def _is_device_prompt(self, text: str) -> bool:
+        """Check if text contains IOS XE prompt"""
+        lines = text.split('\n')
+        for line in lines:
+            stripped = line.strip()
+            if len(stripped) > 0:
+                # Exec mode: hostname# or hostname>
+                match = re.match(r"^[\w\-\.]+[>#]\s*$", stripped)
+                if match is not None:
+                    return True
+                # Config mode: hostname(config)# or hostname(config-if)#
+                match = re.match(r"^[\w\-\.]+\([\w\-]+\)#\s*$", stripped)
+                if match is not None:
+                    return True
+        return False
+
+    def _commit_failed(self, output: str) -> bool:
+        """Check if IOS XE configuration command failed"""
+        output_lower = output.lower()
+        return ("% invalid" in output_lower or
+                "% error" in output_lower or
+                "% incomplete" in output_lower or
+                "% unrecognized" in output_lower or
+                "% ambiguous" in output_lower)
+
+    def _get_config_commands(self) -> list[str]:
+        """Get IOS XE config mode commands"""
+        return ["configure terminal"]
+
+    def _get_commit_commands(self) -> list[str]:
+        """Get IOS XE commit commands (exit and save)"""
+        return ["end", "write memory"]
+
+    def _get_abort_commands(self) -> list[str]:
+        """Get IOS XE abort commands - rollback to last checkpoint if available, otherwise just exit"""
+        if len(self._archive_checkpoint_stack) > 0:
+            # Rollback to the last checkpoint we created before this configuration
+            checkpoint = self._archive_checkpoint_stack.pop(-1)
+            self.log.debug("Rolling back to checkpoint on abort", {"checkpoint": checkpoint})
+            return ["end", "configure replace " + checkpoint + " force"]
+        else:
+            # No checkpoint available, just exit config mode
+            self.log.warning("No checkpoint available for rollback on abort")
+            return ["end"]
+
+    def _get_rollback_commands(self, commits_back: int) -> list[str]:
+        """Get IOS XE rollback commands using checkpoint stack or relative numbering"""
+        # First, try to use the checkpoint stack for precise rollback
+        stack_size = len(self._archive_checkpoint_stack)
+        if commits_back <= stack_size:
+            # We have the checkpoint in our stack, use it for precise rollback
+            checkpoint_index = stack_size - commits_back
+            checkpoint = self._archive_checkpoint_stack[checkpoint_index]
+            self.log.debug("Rolling back to checkpoint from stack", {
+                "commits_back": commits_back,
+                "checkpoint": checkpoint,
+                "stack_size": stack_size
+            })
+            # Remove checkpoints that will be rolled back
+            self._archive_checkpoint_stack = self._archive_checkpoint_stack[:checkpoint_index + 1]
+            return ["configure replace " + checkpoint + " force"]
+        raise ValueError("Not enough checkpoints in the stack {commits_back} > {stack_size}")
+
+    def _get_pre_config_commands(self) -> list[str]:
+        """Get IOS XE pre-config commands - create archive checkpoint"""
+        return ["archive config", "show archive"]
+
+    def _handle_pre_config_output(self, output: str) -> bool:
+        """Extract the archive checkpoint name from the output and push to stack"""
+        # Parse the output to get the archive name
+        archive_name = _get_iosxe_archive_name(output)
+        if archive_name is not None:
+            self._archive_checkpoint_stack.append(archive_name)
+            self.log.debug("Created archive checkpoint", {
+                "name": archive_name,
+                "stack_size": len(self._archive_checkpoint_stack)
+            })
+            return True
+        else:
+            self.log.warning("Could not determine archive checkpoint name")
+            return False
+
+    def get_device_info(self) -> dict[str, str]:
+        """Get Cisco IOS XE device info"""
+        return {
+            "device_type": DEVICE_TYPE_CISCO_IOSXE,
+            "vendor": "Cisco",
+            "os": "IOS XE"
+        }
+
+
+def _get_iosxe_archive_name(show_archive: str):
+    for line in show_archive.splitlines():
+        if "Most Recent" in line:
+            parts = re.split(r"\s+", line.strip())
+            return parts[1]
+
+
+def _test_get_iosxe_archive_name():
+    show_archive = """xe#show archive
+The maximum archive configurations allowed is 10.
+There are currently 8 archive configurations saved.
+The next archive file will be named bootflash:archive-<timestamp>-8
+ Archive #  Name
+   1        bootflash:archive-Oct--8-06-37-00.779-0
+   2        bootflash:archive-Oct--8-09-03-54.041-1
+   3        bootflash:archive-Oct--8-09-03-57.685-2
+   4        bootflash:archive-Oct--8-09-21-53.231-3
+   5        bootflash:archive-Oct--8-09-21-57.158-4
+   6        bootflash:archive-Oct--8-09-21-57.485-5
+   7        bootflash:archive-Oct--8-09-22-02.266-6
+   8        bootflash:archive-Oct--8-09-38-57.217-7 <- Most Recent
+   9
+   10
+"""
+    archive = _get_iosxe_archive_name(show_archive)
+    testing.assertEqual(archive, "bootflash:archive-Oct--8-09-38-57.217-7")

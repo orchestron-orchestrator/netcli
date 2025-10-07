@@ -1,4 +1,4 @@
-error:Exception: Configuration commit failed but was automatically rolled back
+error:Exception: Configuration failed and was aborted
 session_log:configure
 user@device# set invalid config
 user@device# commit
