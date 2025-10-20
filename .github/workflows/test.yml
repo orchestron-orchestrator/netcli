@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        TESTENV: [quicklab-crpd, quicklab-xrd]
+        TESTENV: [quicklab-crpd, quicklab-xrd, quicklab-xe]
     runs-on: ubuntu-24.04
     env:
       IMAGE_PATH: ${{ secrets.IMAGE_PATH || format('ghcr.io/{0}/', github.repository) }}

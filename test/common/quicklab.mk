@@ -34,9 +34,9 @@ start: build-netcli-image
 stop:
 	$(CLAB_BIN) destroy --topo $(TESTENV:netcli-%=%).clab.yml --log-level debug
 
-.PHONY: wait $(addprefix wait-,$(ROUTERS_XR) $(ROUTERS_CRPD))
+.PHONY: wait $(addprefix wait-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE))
 WAIT?=60
-wait: $(addprefix platform-wait-,$(ROUTERS_XR) $(ROUTERS_CRPD))
+wait: $(addprefix platform-wait-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE))
 
 copy:
 	docker cp ../../out/bin/$(TEST_BINARY) $(TESTENV)-netcli:/$(TEST_BINARY)
@@ -52,11 +52,11 @@ endif
 shell:
 	docker exec -it $(TESTENV)-netcli bash -l
 
-.PHONY: $(addprefix cli-,$(ROUTERS_XR) $(ROUTERS_CRPD))
-$(addprefix cli-,$(ROUTERS_XR) $(ROUTERS_CRPD)): cli-%: platform-cli-%
+.PHONY: $(addprefix cli-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE))
+$(addprefix cli-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE)): cli-%: platform-cli-%
 
-.PHONY: $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD))
-$(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD)):
+.PHONY: $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE))
+$(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE)):
 	docker run $(INTERACTIVE) --rm --network container:$(TESTENV)-netcli ghcr.io/notconf/notconf:debug netconf-console2 --host $(@:get-dev-config-%=%) --port 830 --user clab --pass clab@123 --get-config
 
 # Filter to remove Junos metadata attributes that change with each commit
@@ -64,18 +64,18 @@ FILTER_JUNOS_METADATA = sed 's/ junos:commit-seconds="[0-9]*"//g; s/ junos:commi
 
 .phony: test
 test::
-	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD)) | $(FILTER_JUNOS_METADATA) > config-snapshot-before.txt
-	for router in $(ROUTERS_XR) $(ROUTERS_CRPD); do \
+	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE)) | $(FILTER_JUNOS_METADATA) > config-snapshot-before.txt
+	for router in $(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE); do \
 		docker exec $(INTERACTIVE) $(TESTENV)-netcli /$(TEST_BINARY) --address $$router --port 22 --username clab --password clab@123; \
 	done
-	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD)) | $(FILTER_JUNOS_METADATA) > config-snapshot-after.txt
+	$(MAKE) $(addprefix get-dev-config-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE)) | $(FILTER_JUNOS_METADATA) > config-snapshot-after.txt
 	diff -u config-snapshot-before.txt config-snapshot-after.txt
 
 .PHONY: save-logs
-save-logs: $(addprefix save-logs-,$(ROUTERS_XR) $(ROUTERS_CRPD))
+save-logs: $(addprefix save-logs-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE))
 
-.PHONY: $(addprefix save-logs-,$(ROUTERS_XR) $(ROUTERS_CRPD))
-$(addprefix save-logs-,$(ROUTERS_XR) $(ROUTERS_CRPD)):
+.PHONY: $(addprefix save-logs-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE))
+$(addprefix save-logs-,$(ROUTERS_XR) $(ROUTERS_CRPD) $(ROUTERS_XE)):
 	mkdir -p logs
 	docker logs --timestamps $(TESTENV)-$(@:save-logs-%=%) > logs/$(@:save-logs-%=%)_docker.log 2>&1
 	$(MAKE) get-dev-config-$(@:save-logs-%=%) > logs/$(@:save-logs-%=%)_netconf.log || true
