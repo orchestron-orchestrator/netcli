@@ -193,10 +193,10 @@ actor _test_commit_failure_automatic_rollback(t: testing.AsyncT):
             t.failure(Exception("Expected error due to commit failure"))
             return
 
-        # Verify error indicates rollback occurred
+        # Verify error indicates configuration was aborted
         error_msg = str(err)
-        if "automatically rolled back" not in error_msg:
-            t.failure(Exception("Expected rollback error message, got: " + error_msg))
+        if "Configuration failed and was aborted" not in error_msg:
+            t.failure(Exception("Expected abort error message, got: " + error_msg))
             return
 
         # Return error message, session log, and commands
@@ -218,9 +218,12 @@ actor _test_driver_state_transition_validation(t: testing.AsyncT):
         # Test valid transitions
         valid_tests = [
             (drivers.DRIVER_STATE_READY, drivers.DRIVER_STATE_EXECUTING_COMMAND),
+            (drivers.DRIVER_STATE_READY, drivers.DRIVER_STATE_PRE_CONFIG),
             (drivers.DRIVER_STATE_READY, drivers.DRIVER_STATE_ENTERING_CONFIG),
+            (drivers.DRIVER_STATE_PRE_CONFIG, drivers.DRIVER_STATE_ENTERING_CONFIG),
             (drivers.DRIVER_STATE_EXECUTING_COMMAND, drivers.DRIVER_STATE_READY),
-            (drivers.DRIVER_STATE_CONFIG_MODE, drivers.DRIVER_STATE_APPLYING_CONFIG)
+            (drivers.DRIVER_STATE_CONFIG_MODE, drivers.DRIVER_STATE_APPLYING_CONFIG),
+            (drivers.DRIVER_STATE_APPLYING_CONFIG, drivers.DRIVER_STATE_ABORTING_CONFIG)
         ]
 
         for from_state, to_state in valid_tests:
@@ -232,7 +235,9 @@ actor _test_driver_state_transition_validation(t: testing.AsyncT):
         invalid_tests = [
             (drivers.DRIVER_STATE_EXECUTING_COMMAND, drivers.DRIVER_STATE_CONFIG_MODE),
             (drivers.DRIVER_STATE_APPLYING_CONFIG, drivers.DRIVER_STATE_EXECUTING_COMMAND),
-            (drivers.DRIVER_STATE_COMMITTING, drivers.DRIVER_STATE_ENTERING_CONFIG)
+            (drivers.DRIVER_STATE_COMMITTING, drivers.DRIVER_STATE_ENTERING_CONFIG),
+            (drivers.DRIVER_STATE_PRE_CONFIG, drivers.DRIVER_STATE_CONFIG_MODE),
+            (drivers.DRIVER_STATE_PRE_CONFIG, drivers.DRIVER_STATE_READY)
         ]
 
         for from_state, to_state in invalid_tests:

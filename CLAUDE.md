@@ -4,8 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build Commands
 
-- **Build project**: `acton build --dev`
+- **Build project**: `acton build`
 - **Run tests**: `acton test`
+
+## Testing
+
+### Running Tests
+- **Run all tests**: `acton test`
+- **Run all tests from a module**: `acton test --module <module_name>`
+  - Example: `acton test --module test_drivers`
+- **Run specific test**: `acton test --name <test_name>` (use function name WITHOUT `_test_` prefix)
+  - Example: For function `_test_driver_state_transition_validation`, run: `acton test --name driver_state_transition_validation`
+- **Update golden files**: `acton test --name <test_name> --golden-update`
+  - Updates expected output when test behavior changes intentionally
+  - Note: The test will show as "FAIL" once while updating the golden file - this is expected behavior
+- **Golden files location**: `test/golden/<module_name>/<test_name>`
 
 ## Project Structure
 
@@ -34,21 +47,40 @@ The project provides CLI client libraries for network device management:
 
 ### Router Driver System (`src/drivers.act`)
 - **Formal State Machine Architecture**: Implements a complete state machine for router device interactions
-- **Multi-Platform Support**: Base driver with Juniper JUNOS and Cisco IOS XR implementations
+- **Multi-Platform Support**: Base driver with Juniper JUNOS, Cisco IOS XR, and Cisco IOS XE implementations
 - **State-Based Validation**: Prevents invalid operations and ensures proper command sequencing
 - **Enhanced Error Handling**: Centralized error management with automatic cleanup and recovery
 
 **Driver State Machine**:
 ```
-INITIALIZING → READY → EXECUTING_COMMAND → READY
-                ↓                    ↓
-         ENTERING_CONFIG → CONFIG_MODE → APPLYING_CONFIG → TRANSACTION_ACTIVE
-                  ↓              ↓                              ↓       ↓
-              ROLLING_BACK  ABORTING_CONFIG              COMMITTING  ABORTING_CONFIG
-                  ↓              ↓                              ↓       ↓
-                 READY ←← READY ←←                           READY ←← READY
-                                                              ↓
-                                                           ERROR → READY/DISCONNECTED
+State transitions:
+
+INITIALIZING ──→ READY
+                  │
+                  ├──→ EXECUTING_COMMAND ──→ READY
+                  │
+                  ├──→ ENTERING_CONFIG ──→ CONFIG_MODE ──┬──→ APPLYING_CONFIG ──→ COMMITTING ──┬──→ READY
+                  │                                      │                                      │
+                  │                                      └──→ READY (exit)                      └──→ ABORTING_CONFIG ──→ READY
+                  │                                                                                   (on failure)
+                  └──→ ROLLING_BACK ──→ READY
+
+Special transitions (from any state):
+- Any state ──→ ERROR ──→ READY (recovery)
+- Any state ──→ DISCONNECTED ──→ INITIALIZING (reconnect)
+
+Valid state transitions:
+- INITIALIZING: → READY, ERROR, DISCONNECTED
+- READY: → EXECUTING_COMMAND, ENTERING_CONFIG, ROLLING_BACK, ERROR, DISCONNECTED
+- EXECUTING_COMMAND: → READY, ERROR, DISCONNECTED
+- ENTERING_CONFIG: → CONFIG_MODE, ERROR, DISCONNECTED
+- CONFIG_MODE: → APPLYING_CONFIG, ABORTING_CONFIG, READY, ERROR, DISCONNECTED
+- APPLYING_CONFIG: → COMMITTING, ERROR, DISCONNECTED
+- COMMITTING: → READY, ABORTING_CONFIG, ERROR, DISCONNECTED
+- ABORTING_CONFIG: → READY, ERROR, DISCONNECTED
+- ROLLING_BACK: → READY, ERROR, DISCONNECTED
+- ERROR: → READY, DISCONNECTED
+- DISCONNECTED: → INITIALIZING
 ```
 
 **Driver States**:
@@ -56,12 +88,11 @@ INITIALIZING → READY → EXECUTING_COMMAND → READY
 - `READY`: Ready for commands or configuration operations
 - `EXECUTING_COMMAND`: Processing a single command
 - `ENTERING_CONFIG`: Transitioning to configuration mode
-- `CONFIG_MODE`: In device configuration mode
+- `CONFIG_MODE`: In device configuration mode, ready to apply configuration
 - `APPLYING_CONFIG`: Applying configuration commands sequentially
-- `TRANSACTION_ACTIVE`: Configuration applied but not committed (can commit or abort)
-- `COMMITTING`: Committing configuration changes
-- `ABORTING_CONFIG`: Discarding current configuration changes
-- `ROLLING_BACK`: Reverting to previous committed configuration
+- `COMMITTING`: Committing/saving configuration changes (platform-specific)
+- `ABORTING_CONFIG`: Rolling back after commit failure (automatic)
+- `ROLLING_BACK`: Explicit rollback to previous configuration (user-requested)
 - `ERROR`: Error state with automatic cleanup
 - `DISCONNECTED`: SSH connection lost
 
@@ -74,15 +105,15 @@ INITIALIZING → READY → EXECUTING_COMMAND → READY
 - **Rollback Operations**: Support for reverting to previous configurations
 - **Platform Abstraction**: Device-specific prompt patterns and command syntax
 
-**Transaction Management**:
-- **configure()**: Enter config mode and apply changes → TRANSACTION_ACTIVE state
-- **commit_transaction()**: Commit active transaction to device (internal driver method)
-- **abort_configuration()**: Discard current uncommitted changes
-- **rollback_configuration(commits_back)**: Revert to previous configuration state
+**Key Operations**:
+- **execute_command(command)**: Execute a single operational command
+- **configure_and_commit(config_list)**: Apply configuration atomically with automatic rollback on failure
+- **rollback_configuration(commits_back)**: Revert to a previous configuration state
 
 **Platform-Specific Commands**:
 - **Juniper JUNOS**: `rollback`, `rollback N`, `commit`, `exit`
 - **Cisco IOS XR**: `abort`, `rollback configuration last N`, `commit`, `end`
+- **Cisco IOS XE**: `archive config` (checkpoint), `configure replace` (rollback), `write memory` (save)
 
 ### Usage Examples
 - `src/router_example.act`: Router client examples for both Juniper and Cisco platforms

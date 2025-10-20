@@ -90,7 +90,8 @@ actor Client(auth: WorldCap,
 
     def configure_and_commit(on_success: action(response: str) -> None,
                             on_error: action(err: Exception, response: str) -> None,
-                            config: list[str]) -> None:
+                            config: list[str],
+                            skip_pre_config: bool = False) -> None:
         """
         Apply configuration and commit atomically
 
@@ -102,6 +103,8 @@ actor Client(auth: WorldCap,
             on_success: Callback for successful commit (receives response text)
             on_error: Callback for any failure (receives error and response text)
             config: List of configuration commands
+            skip_pre_config: Skip pre-configuration steps (e.g., archive checkpoint).
+                           WARNING: This disables automatic rollback on failure!
         """
         if _driver is not None and is_connected():
             def _on_complete(err: ?Exception, session_log: str) -> None:
@@ -110,7 +113,7 @@ actor Client(auth: WorldCap,
                 else:
                     on_success(session_log)
 
-            _driver.configure_and_commit(_on_complete, config)
+            _driver.configure_and_commit(_on_complete, config, skip_pre_config)
         else:
             on_error(Exception("Not connected or driver not initialized"), "")
 
