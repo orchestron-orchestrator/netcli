@@ -1,7 +1,7 @@
 
 .PHONY: build
 build:
-	acton build --dev $(DEP_OVERRIDES) $(TARGET)
+	acton build $(DEP_OVERRIDES) $(TARGET)
 
 .PHONY: build-linux
 build-linux:

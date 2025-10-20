@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build Commands
 
-- **Build project**: `acton build --dev`
+- **Build project**: `acton build`
 - **Run tests**: `acton test`
 
 ## Testing
