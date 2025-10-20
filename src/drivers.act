@@ -73,7 +73,10 @@ class _Driver(object):
     get_state: proc() -> str
     handle_data: proc(data: bytes) -> None
     execute_command: proc(cb: action(err: ?Exception, response: ?str) -> None, command: str) -> None
-    configure_and_commit: proc(cb: action(err: ?Exception, session_log: str) -> None, config: list[str]) -> None
+    # TODO: default arg?
+    #configure_and_commit: proc(cb: action(err: ?Exception, session_log: str) -> None, config: list[str], skip_pre_config: bool) -> None
+    def configure_and_commit(self, cb: action(err: ?Exception, session_log: str) -> None, config: list[str], skip_pre_config: bool=False) -> None:
+        raise NotImplementedError()
     rollback_configuration: proc(cb: action(err: ?Exception, session_log: str) -> None, commits_back: int) -> None
     get_device_info: proc() -> dict[str, str]
 
@@ -341,8 +344,15 @@ class _BaseDriver(_Driver):
         """Handle output from pre-config commands - override in subclasses if needed"""
         return True
 
-    def configure_and_commit(self, cb: action(err: ?Exception, session_log: str) -> None, config: list[str]) -> None:
-        """Apply configuration and commit atomically with automatic rollback on failure"""
+    def configure_and_commit(self, cb: action(err: ?Exception, session_log: str) -> None, config: list[str], skip_pre_config: bool=False) -> None:
+        """Apply configuration and commit atomically with automatic rollback on failure
+
+        Args:
+            cb: Callback function
+            config: Configuration commands
+            skip_pre_config: Skip pre-configuration steps (e.g., archive checkpoint).
+                           WARNING: This disables automatic rollback on failure!
+        """
         if self._state != DRIVER_STATE_READY:
             cb(Exception("Driver not ready - current state: " + self._state), "")
             return
@@ -353,19 +363,21 @@ class _BaseDriver(_Driver):
         self._session_log = ""
 
         # Check if we need to do pre-config operations (e.g., archive checkpoint for IOS XE)
-        pre_config_cmds = self._get_pre_config_commands()
-        if len(pre_config_cmds) > 0:
-            # Transition to PRE_CONFIG state and execute pre-config commands
-            self._transition_to_state(DRIVER_STATE_PRE_CONFIG)
-            for cmd in pre_config_cmds:
-                self.ssh_client.send_str(cmd + "\n")
-        else:
-            # No pre-config needed, go straight to entering config mode
-            self._transition_to_state(DRIVER_STATE_ENTERING_CONFIG)
-            # Enter config mode using device-specific commands
-            config_cmds = self._get_config_commands()
-            for cmd in config_cmds:
-                self.ssh_client.send_str(cmd + "\n")
+        if not skip_pre_config:
+            pre_config_cmds = self._get_pre_config_commands()
+            if len(pre_config_cmds) > 0:
+                # Transition to PRE_CONFIG state and execute pre-config commands
+                self._transition_to_state(DRIVER_STATE_PRE_CONFIG)
+                for cmd in pre_config_cmds:
+                    self.ssh_client.send_str(cmd + "\n")
+                return  # Will continue from PRE_CONFIG state handler
+
+        # Skip pre-config or no pre-config needed, go straight to entering config mode
+        self._transition_to_state(DRIVER_STATE_ENTERING_CONFIG)
+        # Enter config mode using device-specific commands
+        config_cmds = self._get_config_commands()
+        for cmd in config_cmds:
+            self.ssh_client.send_str(cmd + "\n")
 
     def _handle_configuration_failure(self) -> None:
         """Handle configuration failure - platform specific behavior"""

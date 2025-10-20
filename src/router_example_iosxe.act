@@ -56,35 +56,66 @@ actor IOSXEExample(wc, on_done, username: str, password: str, address: str, port
         )
 
         # Wait a bit for connection to establish
-        after 2.0: check_archive_config()
+        after 2.0: configure_archive()
+
+    def configure_archive() -> None:
+        """Configure archive on the device"""
+        c = client
+        if c is not None and c.is_connected():
+            print("Configuring archive for rollback support...")
+            print("Note: Using skip_pre_config=True, no automatic rollback for this operation")
+
+            archive_config = [
+                "archive",
+                "log config",
+                "logging enable",
+                "exit",
+                "path bootflash:archive",
+                "exit"
+            ]
+
+            # Use skip_pre_config=True since we're configuring archive itself
+            c.configure_and_commit(on_archive_configured, on_archive_config_error, archive_config, True)
+        else:
+            print("Client not connected yet, retrying...")
+            after 1.0: configure_archive()
+
+    def on_archive_configured(response: str) -> None:
+        """Handle successful archive configuration"""
+        print("Archive configured successfully")
+        after 1.0: check_archive_config()
+
+    def on_archive_config_error(err: Exception, response: str) -> None:
+        """Handle archive configuration error"""
+        print("ERROR: Archive configuration failed:", str(err))
+        print("Cannot continue without archive support")
+        cleanup()
 
     def check_archive_config() -> None:
         """Check if archive is configured on the device"""
         c = client
         if c is not None and c.is_connected():
-            print("Checking archive configuration...")
+            print("Verifying archive configuration...")
             c.cmd(on_archive_check, "show archive")
-            after 2.0: execute_commands()
         else:
-            print("Client not connected yet, retrying...")
-            after 1.0: check_archive_config()
+            print("Client not connected")
+            cleanup()
 
     def on_archive_check(err: ?Exception, response: ?str) -> None:
         """Check archive configuration result"""
         if err is not None:
             print("Archive check failed:", str(err))
+            print("Cannot verify archive configuration")
+            cleanup()
         else:
             response_str = response if response is not None else ""
-            if "Archive feature not enabled" in response_str:
-                print("WARNING: Archive feature not configured on device")
-                print("Rollback functionality may not work without archive configuration")
-                print("To configure archive, run these commands manually:")
-                print("  archive")
-                print("  path flash:archive-config")
-                print("  maximum 10")
-                print("  write-memory")
+            if "Archive feature not enabled" in response_str or "No archive configurations" in response_str:
+                print("ERROR: Archive feature still not configured on device")
+                print("Cannot continue without archive support")
+                cleanup()
             else:
-                print("Archive configuration found:", response_str[:200])
+                print("Archive configuration verified:", response_str[:200])
+                after 1.0: execute_commands()
 
     def execute_commands() -> None:
         """Execute some example commands"""
