@@ -197,8 +197,8 @@ actor main(env):
 
         Example(env.cap, done, username, password, address, port)
     except argparse.PrintUsage as exc:
-        print(exc.error_message)
+        print(str(exc))
         env.exit(0)
     except argparse.ArgumentError as exc:
-        print(exc.error_message, err=True)
+        print(str(exc), err=True)
         env.exit(1)
