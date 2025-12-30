@@ -16,7 +16,7 @@ actor _test_juniper_driver_initialization(t: testing.AsyncT):
     var log: logging.Logger = logging.Logger(t.log_handler)
 
     def run_test() -> None:
-        driver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+        driver = drivers.JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
 
         # Verify initial state
         if driver.get_state() != drivers.DRIVER_STATE_INITIALIZING:
@@ -46,7 +46,7 @@ actor _test_cisco_driver_initialization(t: testing.AsyncT):
     var log: logging.Logger = logging.Logger(t.log_handler)
 
     def run_test() -> None:
-        driver = drivers._CiscoIOSXRDriver(drivers.DEVICE_TYPE_CISCO_IOSXR, test_ssh, log)
+        driver = drivers.CiscoIOSXRDriver(drivers.DEVICE_TYPE_CISCO_IOSXR, test_ssh, log)
 
         # Verify initial state
         if driver.get_state() != drivers.DRIVER_STATE_INITIALIZING:
@@ -74,7 +74,7 @@ actor _test_command_execution_state_flow(t: testing.AsyncT):
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
     var log: logging.Logger = logging.Logger(t.log_handler)
-    var driver: drivers._JuniperDriver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+    var driver: drivers.JuniperDriver = drivers.JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
 
     def run_test() -> None:
         driver.initialize()
@@ -124,7 +124,7 @@ actor _test_configuration_and_commit_flow(t: testing.AsyncT):
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
     var log: logging.Logger = logging.Logger(t.log_handler)
-    var driver: drivers._JuniperDriver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+    var driver: drivers.JuniperDriver = drivers.JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
 
     def run_test() -> None:
         driver.initialize()
@@ -168,7 +168,7 @@ actor _test_commit_failure_automatic_rollback(t: testing.AsyncT):
 
     var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
     var log: logging.Logger = logging.Logger(t.log_handler)
-    var driver: drivers._JuniperDriver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+    var driver: drivers.JuniperDriver = drivers.JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
 
     def run_test() -> None:
         driver.initialize()
@@ -213,7 +213,7 @@ actor _test_driver_state_transition_validation(t: testing.AsyncT):
     var log: logging.Logger = logging.Logger(t.log_handler)
 
     def run_test() -> None:
-        driver = drivers._JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
+        driver = drivers.JuniperDriver(drivers.DEVICE_TYPE_JUNIPER, test_ssh, log)
 
         # Test valid transitions
         valid_tests = [
@@ -227,7 +227,7 @@ actor _test_driver_state_transition_validation(t: testing.AsyncT):
         ]
 
         for from_state, to_state in valid_tests:
-            if not driver._is_valid_transition(from_state, to_state):
+            if not driver.is_valid_transition(from_state, to_state):
                 t.failure(Exception("Expected valid transition: " + from_state + " -> " + to_state))
                 return
 
@@ -241,7 +241,7 @@ actor _test_driver_state_transition_validation(t: testing.AsyncT):
         ]
 
         for from_state, to_state in invalid_tests:
-            if driver._is_valid_transition(from_state, to_state):
+            if driver.is_valid_transition(from_state, to_state):
                 t.failure(Exception("Expected invalid transition: " + from_state + " -> " + to_state))
                 return
 

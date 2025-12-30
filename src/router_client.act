@@ -34,7 +34,7 @@ actor Client(auth: WorldCap,
     _log.info("Initializing router client", {"address": address, "protocol_": protocol_})
 
     var _ssh_client: ?ssh.SSHClient = None
-    var _driver: ?drivers._Driver = None
+    var _driver: ?drivers.Driver = None
 
     def _on_ssh_connect(client: ssh.SSHClient) -> None:
         """Handle SSH connection establishment"""
