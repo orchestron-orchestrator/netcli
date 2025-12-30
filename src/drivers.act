@@ -81,7 +81,7 @@ class Driver(object):
     rollback_configuration: proc(cb: action(err: ?Exception, session_log: str) -> None, commits_back: int) -> None
     get_device_info: proc() -> dict[str, str]
 
-class _BaseDriver(Driver):
+class BaseDriver(Driver):
     """Base driver implementation with common functionality"""
 
     _output_buffer: str
@@ -458,7 +458,7 @@ def create_driver(device_type: str, ssh_client: SSHClientWrapper, log: logging.L
         return None
 
 
-class JuniperDriver(_BaseDriver):
+class JuniperDriver(BaseDriver):
     """Juniper JUNOS driver implementation"""
 
     def initialize(self) -> None:
@@ -526,7 +526,7 @@ class JuniperDriver(_BaseDriver):
             "os": "JUNOS"
         }
 
-class CiscoIOSXRDriver(_BaseDriver):
+class CiscoIOSXRDriver(BaseDriver):
     """Cisco IOS XR driver implementation"""
 
     def initialize(self) -> None:
@@ -595,7 +595,7 @@ class CiscoIOSXRDriver(_BaseDriver):
             "os": "IOS XR"
         }
 
-class CiscoIOSXEDriver(_BaseDriver):
+class CiscoIOSXEDriver(BaseDriver):
     """
     Cisco IOS XE driver implementation
 
@@ -609,7 +609,7 @@ class CiscoIOSXEDriver(_BaseDriver):
     _archive_checkpoint_stack: list[str]  # Stack of archive checkpoints for rollback
 
     def __init__(self, device_type: str, ssh_client: SSHClientWrapper, log: logging.Logger):
-        _BaseDriver.__init__(self, device_type, ssh_client, log)
+        BaseDriver.__init__(self, device_type, ssh_client, log)
         self._archive_checkpoint_stack = []
 
     def initialize(self) -> None:
