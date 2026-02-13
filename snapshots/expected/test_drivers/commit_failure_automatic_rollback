@@ -5,4 +5,4 @@ user@device# commit
 error: commit failed - invalid configuration
 user@device# rollback
 user@device# 
-commands:['configure', 'set invalid config', 'commit', 'exit', 'rollback', 'exit']
+commands:['configure', 'set invalid config', 'commit', 'rollback', 'exit']

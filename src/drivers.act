@@ -91,6 +91,7 @@ class BaseDriver(Driver):
     _command_callback: ?action(err: ?Exception, response: ?str) -> None
     _config_callback: ?action(err: ?Exception, session_log: str) -> None
     _config_commands: list[str]
+    _pending_commit_commands: list[str]
     _rollback_commits: int
 
     def __init__(self, device_type: str, ssh_client: SSHClientWrapper, log: logging.Logger):
@@ -104,6 +105,7 @@ class BaseDriver(Driver):
         self._command_callback = None
         self._config_callback = None
         self._config_commands = []
+        self._pending_commit_commands = []
         self._rollback_commits = 0
 
     def initialize(self) -> None:
@@ -164,6 +166,7 @@ class BaseDriver(Driver):
         if config_callback is not None:
             self._config_callback = None
             self._config_commands = []
+            self._pending_commit_commands = []
             config_callback(error, self._session_log)
 
 
@@ -231,8 +234,9 @@ class BaseDriver(Driver):
             else:
                 # No config commands, go straight to commit
                 self._transition_to_state(DRIVER_STATE_COMMITTING)
-                commit_cmds = self._get_commit_commands()
-                for cmd in commit_cmds:
+                self._pending_commit_commands = self._get_commit_commands().copy()
+                if len(self._pending_commit_commands) > 0:
+                    cmd = self._pending_commit_commands.pop(0)
                     self.ssh_client.send_str(cmd + "\n")
             self._output_buffer = ""
 
@@ -250,8 +254,9 @@ class BaseDriver(Driver):
             else:
                 # All config commands sent, proceed to commit
                 self._transition_to_state(DRIVER_STATE_COMMITTING)
-                commit_cmds = self._get_commit_commands()
-                for cmd in commit_cmds:
+                self._pending_commit_commands = self._get_commit_commands().copy()
+                if len(self._pending_commit_commands) > 0:
+                    cmd = self._pending_commit_commands.pop(0)
                     self.ssh_client.send_str(cmd + "\n")
                 self._output_buffer = ""
 
@@ -259,7 +264,14 @@ class BaseDriver(Driver):
             # Check if commit succeeded or failed
             if self._commit_failed(self._output_buffer):
                 # Commit failed - trigger abort/rollback
+                self._pending_commit_commands = []
                 self._handle_configuration_failure()
+                self._output_buffer = ""
+            elif len(self._pending_commit_commands) > 0:
+                # Send next commit-phase command (e.g. exit/end/write memory)
+                cmd = self._pending_commit_commands.pop(0)
+                self.ssh_client.send_str(cmd + "\n")
+                self._output_buffer = ""
             else:
                 # Configuration committed successfully
                 config_callback = self._config_callback
@@ -267,6 +279,7 @@ class BaseDriver(Driver):
                     self._config_callback = None
                     config_callback(None, self._session_log)
 
+                self._pending_commit_commands = []
                 self._transition_to_state(DRIVER_STATE_READY)
                 self._output_buffer = ""
 
@@ -360,6 +373,7 @@ class BaseDriver(Driver):
 
         self._config_callback = cb
         self._config_commands = config.copy()
+        self._pending_commit_commands = []
         self._output_buffer = ""
         self._session_log = ""
 
@@ -383,6 +397,7 @@ class BaseDriver(Driver):
     def _handle_configuration_failure(self) -> None:
         """Handle configuration failure - platform specific behavior"""
         self.log.warning("Configuration failed, aborting configuration")
+        self._pending_commit_commands = []
         self._transition_to_state(DRIVER_STATE_ABORTING_CONFIG)
 
         # Send device-specific abort commands
