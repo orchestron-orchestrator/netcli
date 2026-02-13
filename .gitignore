@@ -5,3 +5,4 @@ build.zig*
 out
 licenses
 .claude
+**/snapshots/output

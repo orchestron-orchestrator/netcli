@@ -9,6 +9,7 @@ path = [
     "*.act.json",
     "src/**",
     "test/**",
+    "**/snapshots/expected/**",
 
 ]
 SPDX-FileCopyrightText = "Deutsche Telekom AG"
