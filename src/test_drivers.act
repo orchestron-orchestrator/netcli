@@ -206,6 +206,55 @@ actor _test_commit_failure_automatic_rollback(t: testing.AsyncT):
 
     after 0: run_test()
 
+actor _test_iosxr_commit_failure_staged_commit_flow(t: testing.AsyncT):
+    """Test IOS XR commit failure detection with staged commit commands"""
+
+    var test_ssh: drivers.TestSSHWrapper = drivers.TestSSHWrapper()
+    var log: logging.Logger = logging.Logger(t.log_handler)
+    var driver: drivers.CiscoIOSXRDriver = drivers.CiscoIOSXRDriver(drivers.DEVICE_TYPE_CISCO_IOSXR, test_ssh, log)
+
+    def run_test() -> None:
+        driver.initialize()
+        test_ssh.clear_sent_commands()
+
+        config_commands = ["service-policy output FOOBAR"]
+        driver.configure_and_commit(config_callback, config_commands)
+
+        # Enter config mode and apply command
+        driver.handle_data(b"configure terminal\r\n\rRP/0/RP0/CPU0:ios(config)#")
+        driver.handle_data(b"service-policy output FOOBAR\r\n\rRP/0/RP0/CPU0:ios(config)#")
+
+        # IOS XR commit failure - should trigger abort without sending "end" from commit phase
+        driver.handle_data(b"commit\r\n% Failed to commit one or more configuration items during a pseudo-atomic operation. All changes made have been reverted. Please issue 'show configuration failed [inheritance]' from this session to view the errors\r\nRP/0/RP0/CPU0:ios(config)#")
+
+        # Simulate abort completion prompt
+        driver.handle_data(b"abort\r\nRP/0/RP0/CPU0:ios(config)#")
+
+    def config_callback(err: ?Exception, session_log: str) -> None:
+        if err is None:
+            t.failure(Exception("Expected error due to commit failure"))
+            return
+
+        error_msg = str(err)
+        if "Configuration failed and was aborted" not in error_msg:
+            t.failure(Exception("Expected abort error message, got: " + error_msg))
+            return
+
+        if driver.get_state() != drivers.DRIVER_STATE_READY:
+            t.failure(Exception("Expected READY state after abort, got: " + driver.get_state()))
+            return
+
+        commands = test_ssh.get_sent_commands()
+        expected_commands = ["configure terminal", "service-policy output FOOBAR", "commit", "abort", "end"]
+        if commands != expected_commands:
+            t.failure(Exception("Expected IOS XR abort sequence after commit failure, got: " + str(commands)))
+            return
+
+        result = "error:" + error_msg + "\nstate:" + driver.get_state() + "\ncommands:" + str(commands)
+        t.success(result)
+
+    after 0: run_test()
+
 actor _test_driver_state_transition_validation(t: testing.AsyncT):
     """Test state transition validation logic"""
 
