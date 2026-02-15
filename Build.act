@@ -1,0 +1,4 @@
+name = "netcli"
+fingerprint = 0x81048851dcb0ac83
+dependencies = {}
+zig_dependencies = {}
