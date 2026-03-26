@@ -1,5 +1,7 @@
 import argparse
 import logging
+import process
+
 import router_client
 
 
@@ -338,7 +340,7 @@ actor main(env):
         address = args.get_str("address")
         port = args.get_int("port")
 
-        IOSXEExample(env.cap, done, username, password, address, port)
+        IOSXEExample(process.ProcessCap(env.cap), done, username, password, address, port)
     except argparse.PrintUsage as exc:
         print(exc.error_message)
         env.exit(0)

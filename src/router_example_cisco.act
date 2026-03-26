@@ -199,7 +199,7 @@ actor main(env):
         address = args.get_str("address")
         port = args.get_int("port")
 
-        CiscoExample(env.cap, done, username, password, address, port)
+        CiscoExample(process.ProcessCap(env.cap), done, username, password, address, port)
     except argparse.PrintUsage as exc:
         print(exc.error_message)
         env.exit(0)
