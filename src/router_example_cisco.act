@@ -1,9 +1,11 @@
 import argparse
 import logging
+import process
+
 import router_client
 
 
-actor CiscoExample(wc, on_done, username: str, password: str, address: str, port: int):
+actor CiscoExample(pcap, on_done, username: str, password: str, address: str, port: int):
     """Example demonstrating Cisco IOS XR router client usage"""
 
     # Create logging handler
@@ -36,7 +38,7 @@ actor CiscoExample(wc, on_done, username: str, password: str, address: str, port
 
         # Create client with Cisco IOS XR parameters
         client = router_client.Client(
-            auth=wc,
+            pcap=pcap,
             address=address,
             port=port,
             username=username,

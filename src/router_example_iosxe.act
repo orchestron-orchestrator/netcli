@@ -3,7 +3,7 @@ import logging
 import router_client
 
 
-actor IOSXEExample(wc, on_done, username: str, password: str, address: str, port: int):
+actor IOSXEExample(pcap, on_done, username: str, password: str, address: str, port: int):
     """Example demonstrating Cisco IOS XE router client usage"""
 
     # Create logging handler
@@ -46,7 +46,7 @@ actor IOSXEExample(wc, on_done, username: str, password: str, address: str, port
 
         # Create client with Cisco IOS XE parameters
         client = router_client.Client(
-            auth=wc,
+            pcap=pcap,
             address=address,
             port=port,
             username=username,

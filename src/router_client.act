@@ -1,10 +1,12 @@
 import logging
+import process
 import ssh
+
 import drivers
 
 """Simple router client library for Acton"""
 
-actor Client(auth: WorldCap,
+actor Client(pcap: process.ProcessCap,
              address: str,
              username: str,
              password: ?str = None,
@@ -19,7 +21,7 @@ actor Client(auth: WorldCap,
     Provides a clean interface for connecting to routers and executing commands.
 
     Args:
-        auth: WorldCap for SSH process creation
+        pcap: process.ProcessCap for SSH process creation
         address: Router IP address or hostname
         username: SSH username
         password: Password for authentication
@@ -163,7 +165,7 @@ actor Client(auth: WorldCap,
     _log.debug("Starting SSH connection", {"address": address, "port": actual_port})
 
     ssh.SSHClient(
-        auth,
+        pcap,
         address=address,
         port=actual_port,
         username=username,

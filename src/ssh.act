@@ -8,7 +8,7 @@ AUTH_NONE: int = 0
 AUTH_PASSWORD: int = 1
 AUTH_KEY: int = 2
 
-actor SSHClient(auth: WorldCap,
+actor SSHClient(pcap: process.ProcessCap,
                 address: str,
                 port: int = 22,
                 username: str,
@@ -32,7 +32,7 @@ actor SSHClient(auth: WorldCap,
     - Configurable connection options
 
     Args:
-        auth: WorldCap for process creation
+        pcap: process.ProcessCap for process creation
         address: Remote host address
         port: SSH port (default: 22)
         username: SSH username
@@ -197,7 +197,7 @@ actor SSHClient(auth: WorldCap,
     _log.debug("Starting SSH process", {"cmd": cmd, "env_vars": list(cmd_env.keys()) if cmd_env is not None else []})
 
     _process = process.Process(
-        process.ProcessCap(auth),
+        pcap,
         cmd,
         _on_stdout,
         _on_stderr,
