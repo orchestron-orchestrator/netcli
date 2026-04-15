@@ -6,8 +6,6 @@ ROUTERS_XR=
 ROUTERS_CRPD=
 ROUTERS_XE=xe1
 
-# Image path for vrnetlab containers
-IMAGE_PATH ?= ghcr.io/orchestron-orchestrator/
 WAIT=240
 
 # Include common makefiles first
