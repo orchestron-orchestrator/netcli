@@ -1,5 +1,5 @@
 # netcli - NETCONF <> CLI Conversion System
-[![REUSE Compliance Check](https://github.com/orchestron-orchestrator/netcli/actions/workflows/reuse-compliance.yml/badge.svg)](https://github.com/orchestron-orchestrator/netcli/actions/workflows/reuse-compliance.yml)
+[![REUSE Compliance Check](https://github.com/stratoweave/netcli/actions/workflows/reuse-compliance.yml/badge.svg)](https://github.com/stratoweave/netcli/actions/workflows/reuse-compliance.yml)
 
 netcli converts CLI configuration to NETCONF XML / RESTCONF JSON and vice versa. This is performed by round-tripping the configuration through virtual devices, like crpd (containerized JUNOS) or XRd (containerized IOS XR).
 
