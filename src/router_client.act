@@ -1,10 +1,10 @@
+"""Simple router client library for Acton"""
+
 import logging
 import process
 import ssh
 
 import drivers
-
-"""Simple router client library for Acton"""
 
 actor Client(pcap: process.ProcessCap,
              address: str,
