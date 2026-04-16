@@ -1,13 +1,13 @@
-import testing
-import logging
-import drivers
-
 """
 Driver State Machine Tests
 
 Tests the driver state machine using async actor pattern with external driving.
 Uses TestSSHWrapper to capture commands and handle_data() to simulate responses.
 """
+
+import testing
+import logging
+import drivers
 
 actor _test_juniper_driver_initialization(t: testing.AsyncT):
     """Test Juniper driver initialization and state transitions"""

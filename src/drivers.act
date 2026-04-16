@@ -1,10 +1,10 @@
+"""Router driver auto-detection and base classes"""
+
 import logging
 import ssh
 import re
 import testing
 import time
-
-"""Router driver auto-detection and base classes"""
 
 # SSH Client Wrapper for dependency injection and testing
 class SSHClientWrapper(object):

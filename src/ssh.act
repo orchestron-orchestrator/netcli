@@ -1,7 +1,7 @@
+"""SSH client library for Acton"""
+
 import logging
 import process
-
-"""SSH client library for Acton"""
 
 # Authentication methods
 AUTH_NONE: int = 0
