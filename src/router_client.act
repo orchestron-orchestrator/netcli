@@ -1,6 +1,7 @@
 """Simple router client library for Acton"""
 
 import logging
+import pipe
 import process
 import ssh
 
@@ -14,7 +15,8 @@ actor Client(pcap: process.ProcessCap,
              protocol_: str = "ssh",
              port: int = 22,
              device_type: ?str = None,
-             log_handler: ?logging.Handler = None):
+             log_handler: ?logging.Handler = None,
+             transport_pipe: ?pipe.Pipe = None):
     """
     Simple router client
 
@@ -30,33 +32,36 @@ actor Client(pcap: process.ProcessCap,
         port: Connection port (default: 22 for SSH, 23 for telnet)
         device_type: Device type override (e.g., "juniper_junos", "cisco_iosxr")
         log_handler: Optional logging handler
+        transport_pipe: Optional byte-stream pipe for in-process testing
     """
 
     _log = logging.Logger(log_handler)
     _log.info("Initializing router client", {"address": address, "protocol_": protocol_})
 
     var _ssh_client: ?ssh.SSHClient = None
+    var _pipe: ?pipe.Pipe = transport_pipe
     var _driver: ?drivers.Driver = None
+
+    def _initialize_driver(ssh_wrapper: drivers.SSHClientWrapper, detected_type: ?str) -> None:
+        # Auto-detect device type if not specified
+        selected_type = device_type
+        if selected_type is None:
+            selected_type = detected_type
+
+        # Create appropriate driver
+        if selected_type is not None and selected_type != drivers.DEVICE_TYPE_UNKNOWN:
+            _log.info("Using device type", {"device_type": selected_type})
+            _driver = drivers.create_driver(selected_type, ssh_wrapper, _log)
+        else:
+            _log.error("Failed to detect device type or unsupported device", {"detected_type": selected_type if selected_type is not None else "None"})
+        if _driver is not None:
+            _driver.initialize()
 
     def _on_ssh_connect(client: ssh.SSHClient) -> None:
         """Handle SSH connection establishment"""
         _log.info("SSH connection established")
         _ssh_client = client
-
-        # Auto-detect device type if not specified
-        detected_type = device_type
-        if detected_type is None:
-            detected_type = drivers.auto_detect(client)
-
-        # Create appropriate driver
-        if detected_type is not None and detected_type != drivers.DEVICE_TYPE_UNKNOWN:
-            _log.info("Using device type", {"device_type": detected_type})
-            ssh_wrapper = drivers.ProductionSSHWrapper(client)
-            _driver = drivers.create_driver(detected_type, ssh_wrapper, _log)
-        else:
-            _log.error("Failed to detect device type or unsupported device", {"detected_type": detected_type if detected_type is not None else "None"})
-        if _driver is not None:
-            _driver.initialize()
+        _initialize_driver(drivers.ProductionSSHWrapper(client), drivers.auto_detect(client))
 
     def _on_ssh_data(client: ssh.SSHClient, data: bytes) -> None:
         """Handle SSH data reception"""
@@ -70,6 +75,21 @@ actor Client(pcap: process.ProcessCap,
     def _on_ssh_exit(client: ssh.SSHClient, exit_code: int, term_signal: ?int) -> None:
         """Handle SSH connection termination"""
         _log.info("SSH connection closed", {"exit_code": exit_code})
+
+    def _on_pipe_event(err: ?Exception, data: ?bytes) -> None:
+        if data is not None:
+            if _driver is not None:
+                _driver.handle_data(data)
+            return
+
+        if err is not None:
+            _log.error("Pipe transport error", {"error": err})
+            return
+
+        p = _pipe
+        if p is not None:
+            _log.info("Pipe transport connected")
+            _initialize_driver(drivers.PipeWrapper(p), drivers.DEVICE_TYPE_UNKNOWN)
 
     def is_connected() -> bool:
         """Check if client is connected and ready"""
@@ -138,7 +158,10 @@ actor Client(pcap: process.ProcessCap,
         """Disconnect from the device"""
         if _ssh_client is not None:
             _ssh_client.close()
+        if _pipe is not None:
+            _pipe.close(None)
         _ssh_client = None
+        _pipe = None
         _driver = None
 
     def get_device_info() -> ?dict[str, str]:
@@ -149,7 +172,7 @@ actor Client(pcap: process.ProcessCap,
             return None
 
     # Validate protocol
-    if protocol_ != "ssh":
+    if transport_pipe is None and protocol_ != "ssh":
         _log.error("Unsupported protocol", {"protocol_": protocol_})
         # For now, only SSH is supported
         raise ValueError("Unsupported protocol: " + protocol_)
@@ -161,21 +184,23 @@ actor Client(pcap: process.ProcessCap,
     elif port == 23 and protocol_ == "telnet":
         actual_port = 23
 
-    # Initialize SSH connection
-    _log.debug("Starting SSH connection", {"address": address, "port": actual_port})
-
-    ssh.SSHClient(
-        pcap,
-        address=address,
-        port=actual_port,
-        username=username,
-        password=password,
-        key_path=key_path,
-        strict_host_key_checking=False,
-        connect_timeout=30,
-        on_connect=_on_ssh_connect,
-        on_data=_on_ssh_data,
-        on_error=_on_ssh_error,
-        on_exit=_on_ssh_exit,
-        log_handler=log_handler
-    )
+    # Initialize connection
+    if transport_pipe is not None:
+        transport_pipe.read_cb(_on_pipe_event)
+    else:
+        _log.debug("Starting SSH connection", {"address": address, "port": actual_port})
+        ssh.SSHClient(
+            pcap,
+            address=address,
+            port=actual_port,
+            username=username,
+            password=password,
+            key_path=key_path,
+            strict_host_key_checking=False,
+            connect_timeout=30,
+            on_connect=_on_ssh_connect,
+            on_data=_on_ssh_data,
+            on_error=_on_ssh_error,
+            on_exit=_on_ssh_exit,
+            log_handler=log_handler
+        )

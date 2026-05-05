@@ -1,0 +1,71 @@
+"""Mock CLI server for in-process netcli tests."""
+
+import logging
+import pipe
+
+
+actor MockCliServer(transport: pipe.Pipe,
+                    prompt: str = "user@device> ",
+                    canned_responses: ?dict[str, str] = None,
+                    on_command: ?action(MockCliServer, str) -> None = None,
+                    log_handler: ?logging.Handler = None):
+    _log = logging.Logger(log_handler)
+
+    var _buffer = ""
+    var _responses: dict[str, str] = canned_responses if canned_responses is not None else {}
+    var _commands: list[str] = []
+
+    def add_response(command: str, response: str):
+        _responses[command] = response
+
+    def push_response(command: str, response: str):
+        add_response(command, response)
+
+    def send(data: str):
+        transport.write(data.encode())
+
+    def send_prompt():
+        send(prompt)
+
+    def respond(command: str, response: str):
+        send(command + "\n" + response + "\n" + prompt)
+
+    def get_commands() -> list[str]:
+        return _commands.copy()
+
+    def _dispatch_command(command: str):
+        _commands.append(command)
+        response = _responses.get(command)
+        if response is not None:
+            respond(command, response)
+            return
+
+        cb = on_command
+        if cb is not None:
+            cb(self, command)
+        else:
+            respond(command, "")
+
+    def _process_buffer():
+        while _buffer.find("\n") >= 0:
+            idx = _buffer.find("\n")
+            line = _buffer[:idx]
+            _buffer = _buffer[idx + 1:]
+            command = line.strip()
+            if len(command) > 0:
+                _dispatch_command(command)
+
+    def _on_pipe_event(err: ?Exception, data: ?bytes):
+        if data is not None:
+            _buffer += data.decode()
+            _process_buffer()
+            return
+
+        if err is not None:
+            _log.error("Mock CLI pipe error", {"error": err})
+            return
+
+        _log.debug("Mock CLI pipe connected")
+        send_prompt()
+
+    transport.read_cb(_on_pipe_event)

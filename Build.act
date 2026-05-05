@@ -1,4 +1,10 @@
 name = "netcli"
 fingerprint = 0x81048851dcb0ac83
-dependencies = {}
+dependencies = {
+    "pipe": (
+        repo_url="https://github.com/actonlang/pipe.git",
+        url="https://github.com/actonlang/pipe/archive/02c8e23fc7000c114f783dec095c8cd53a46de6f.zip",
+        hash="N-V-__8AALYVAACwgCtCTNCXgLmV0uBUW0ZaAF5J2epfQeBo"
+    )
+}
 zig_dependencies = {}

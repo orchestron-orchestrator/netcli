@@ -1,6 +1,7 @@
 """Router driver auto-detection and base classes"""
 
 import logging
+import pipe
 import ssh
 import re
 import testing
@@ -21,6 +22,18 @@ class ProductionSSHWrapper(SSHClientWrapper):
     def send_str(self, data: str) -> bool:
         """Send string data via SSH client"""
         return self._ssh_client.send_str(data)
+
+class PipeWrapper(SSHClientWrapper):
+    """Wrapper that sends CLI bytes over a Pipe transport"""
+    _pipe: pipe.Pipe
+
+    def __init__(self, transport: pipe.Pipe):
+        self._pipe = transport
+
+    def send_str(self, data: str) -> bool:
+        """Send string data via Pipe"""
+        self._pipe.write(data.encode())
+        return True
 
 class TestSSHWrapper(SSHClientWrapper):
     """Test wrapper that captures sent commands for verification"""
@@ -198,7 +211,10 @@ class BaseDriver(Driver):
     def _handle_prompt_received(self) -> None:
         """Handle when prompt is received"""
         self.log.debug("_handle_prompt_received", {"state": self._state, "output_buffer": self._output_buffer})
-        if self._state == DRIVER_STATE_EXECUTING_COMMAND:
+        if self._state == DRIVER_STATE_READY:
+            self._output_buffer = ""
+
+        elif self._state == DRIVER_STATE_EXECUTING_COMMAND:
             # Extract command output
             cmd = self._current_command
             if cmd is not None:

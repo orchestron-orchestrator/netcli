@@ -1,0 +1,151 @@
+"""Mock CLI server integration tests."""
+
+import pipe
+import process
+import testing
+
+import drivers
+import mock_cli
+import router_client
+
+
+actor _test_mock_cli_canned_response(t: testing.EnvT):
+    log_handler = t.log_handler
+    pipes = pipe.actor_pipe_pair()
+    var client: ?router_client.Client = None
+    var done = False
+
+    mock_cli.MockCliServer(
+        transport=pipes.server,
+        prompt="user@device> ",
+        canned_responses={
+            "show version": "Junos mock version 24.4R1"
+        },
+        log_handler=log_handler
+    )
+
+    def _fail_once(err: Exception):
+        if done:
+            return
+        done = True
+        t.failure(err)
+
+    def _success_once():
+        if done:
+            return
+        done = True
+        t.success()
+
+    def _run_command(attempt: int):
+        c = client
+        if c is not None and c.is_connected():
+            c.cmd(_on_command, "show version")
+        elif attempt < 10:
+            after 0.1: _run_command(attempt + 1)
+        else:
+            _fail_once(ValueError("Mock CLI client did not become ready"))
+
+    def _on_command(err: ?Exception, response: ?str):
+        if err is not None:
+            _fail_once(err)
+            return
+
+        if response is None:
+            _fail_once(ValueError("Missing mock CLI response"))
+            return
+
+        if response != "Junos mock version 24.4R1":
+            _fail_once(ValueError("Unexpected mock CLI response: " + str(response)))
+            return
+
+        c = client
+        if c is not None:
+            c.disconnect()
+        _success_once()
+
+    def _on_timeout():
+        _fail_once(ValueError("Timed out waiting for mock CLI canned response"))
+
+    client = router_client.Client(
+        pcap=process.ProcessCap(t.env.auth),
+        address="actor-pipe",
+        username="actor-pipe",
+        device_type=drivers.DEVICE_TYPE_JUNIPER,
+        log_handler=log_handler,
+        transport_pipe=pipes.client
+    )
+    after 0.1: _run_command(0)
+    after 2.0: _on_timeout()
+
+
+actor _test_mock_cli_callback_response(t: testing.EnvT):
+    log_handler = t.log_handler
+    pipes = pipe.actor_pipe_pair()
+    var client: ?router_client.Client = None
+    var done = False
+
+    def _on_mock_command(server: mock_cli.MockCliServer, command: str):
+        if command == "show system uptime":
+            server.respond(command, "System booted 3 days ago")
+        else:
+            server.respond(command, "")
+
+    mock_cli.MockCliServer(
+        transport=pipes.server,
+        prompt="user@device> ",
+        on_command=_on_mock_command,
+        log_handler=log_handler
+    )
+
+    def _fail_once(err: Exception):
+        if done:
+            return
+        done = True
+        t.failure(err)
+
+    def _success_once():
+        if done:
+            return
+        done = True
+        t.success()
+
+    def _run_command(attempt: int):
+        c = client
+        if c is not None and c.is_connected():
+            c.cmd(_on_command, "show system uptime")
+        elif attempt < 10:
+            after 0.1: _run_command(attempt + 1)
+        else:
+            _fail_once(ValueError("Mock CLI client did not become ready"))
+
+    def _on_command(err: ?Exception, response: ?str):
+        if err is not None:
+            _fail_once(err)
+            return
+
+        if response is None:
+            _fail_once(ValueError("Missing mock CLI callback response"))
+            return
+
+        if response != "System booted 3 days ago":
+            _fail_once(ValueError("Unexpected mock CLI callback response: " + str(response)))
+            return
+
+        c = client
+        if c is not None:
+            c.disconnect()
+        _success_once()
+
+    def _on_timeout():
+        _fail_once(ValueError("Timed out waiting for mock CLI callback response"))
+
+    client = router_client.Client(
+        pcap=process.ProcessCap(t.env.auth),
+        address="actor-pipe",
+        username="actor-pipe",
+        device_type=drivers.DEVICE_TYPE_JUNIPER,
+        log_handler=log_handler,
+        transport_pipe=pipes.client
+    )
+    after 0.1: _run_command(0)
+    after 2.0: _on_timeout()

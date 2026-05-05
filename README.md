@@ -12,6 +12,7 @@ This package provides the CLI client libraries needed for the conversion system:
 - **SSH Client (`src/ssh.act`)** - Generic SSH client actor with multiple authentication methods
 - **Router Client (`src/router_client.act`)** - Platform-agnostic router CLI client with transaction support
 - **Router Drivers (`src/drivers.act`)** - Formal state machine architecture for device-specific operations
+- **Mock CLI Server (`src/mock_cli.act`)** - In-process CLI server for tests using the shared pipe package
 
 ### Supported Platforms
 
